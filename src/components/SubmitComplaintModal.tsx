@@ -15,7 +15,7 @@ import {
 import confetti from "canvas-confetti";
 import { Category, Priority, StudentProfile, Complaint } from "../types";
 import { AIAnalysisCard } from "./AIAnalysisCard";
-import { apiUrl } from "../api";
+import { apiPost } from "../api";
 
 interface SubmitComplaintModalProps {
   isOpen: boolean;
@@ -83,25 +83,27 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
     setIsSubmitting(true);
 
     try {
-      // 1. Trigger AI analysis on backend
-      const aiResponse = await fetch(apiUrl("/api/ai/analyze-complaint"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      // AI triage is best effort; complaint capture must remain available during AI outages.
+      let aiData: {
+        category?: Category;
+        priority?: Priority;
+        reason?: string;
+        confidence?: number;
+        recommendedDepartment?: string;
+      } = {};
+      try {
+        aiData = await apiPost("/api/ai/analyze-complaint", {
           title: title.trim(),
           description: description.trim(),
           category,
           location: location.trim(),
-        }),
-      });
-
-      const aiData = await aiResponse.json();
+        });
+      } catch (aiError) {
+        console.warn("AI analysis unavailable; saving with fallback classification.", aiError);
+      }
 
       // 2. Submit new complaint with AI results
-      const res = await fetch(apiUrl("/api/complaints"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await apiPost<{ success: boolean; complaint?: Complaint; error?: string }>("/api/complaints", {
           studentId: studentProfile?.studentId || studentProfile?.id || "STU001",
           studentName: studentProfile?.name || "Student User",
           studentRoll: studentProfile?.rollNumber || "23AIML001",
@@ -117,10 +119,7 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
           department: aiData.recommendedDepartment || `${category} Support Department`,
           location: location.trim() || "Main Campus",
           attachments: files,
-        }),
       });
-
-      const data = await res.json();
       if (data.success && data.complaint) {
         setSubmittedComplaint(data.complaint);
         onSubmitSuccess(data.complaint);
@@ -133,11 +132,11 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
           colors: ["#146EF5", "#3B82F6", "#10B981", "#F59E0B"],
         });
       } else {
-        setErrorMsg("Failed to store complaint. Please try again.");
+        setErrorMsg(data.error || "We could not save your complaint. Please try again.");
       }
     } catch (err: any) {
       console.error("Submission failed:", err);
-      setErrorMsg("Network error occurred during submission. Please try again.");
+      setErrorMsg(err?.message || "We could not save your complaint. Please try again.");
     } finally {
       setIsSubmitting(false);
     }

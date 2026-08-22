@@ -5,6 +5,7 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { Pool } from "pg";
 
 dotenv.config();
 
@@ -28,6 +29,50 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json({ limit: "15mb" }));
+
+const database = process.env.DATABASE_URL
+  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  : null;
+
+async function initializeDatabase() {
+  if (!database) {
+    console.warn("DATABASE_URL is not configured; using the local compatibility cache.");
+    return;
+  }
+
+  await database.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      roll_number TEXT UNIQUE NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      name TEXT NOT NULL DEFAULT 'Student',
+      department TEXT NOT NULL DEFAULT 'General Department',
+      year TEXT NOT NULL DEFAULT 'Enrolled',
+      role TEXT NOT NULL DEFAULT 'student' CHECK (role IN ('student', 'warden', 'admin')),
+      email_verified BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS complaints (
+      id TEXT PRIMARY KEY,
+      student_id TEXT NOT NULL,
+      payload JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      recipient_type TEXT NOT NULL,
+      recipient_id TEXT,
+      complaint_id TEXT NOT NULL,
+      payload JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS complaints_created_at_idx ON complaints (created_at DESC);
+    CREATE INDEX IF NOT EXISTS complaints_student_id_idx ON complaints (student_id);
+    CREATE INDEX IF NOT EXISTS notifications_recipient_idx ON notifications (recipient_type, recipient_id);
+  `);
+}
 
 // ==========================================
 // CSV STORAGE ENGINE (data/students.csv)
@@ -825,6 +870,58 @@ let notifications: DBNotification[] = [
   }
 ];
 
+async function hydratePersistentState() {
+  if (!database) return;
+  const complaintRows = await database.query<{ payload: DBComplaint }>(
+    "SELECT payload FROM complaints ORDER BY created_at DESC"
+  );
+  const notificationRows = await database.query<{ payload: DBNotification }>(
+    "SELECT payload FROM notifications ORDER BY created_at DESC"
+  );
+
+  if (complaintRows.rows.length === 0) {
+    for (const complaint of complaints) {
+      await database.query(
+        "INSERT INTO complaints (id, student_id, payload, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
+        [complaint.id, complaint.studentId, complaint, complaint.createdAt, complaint.updatedAt]
+      );
+    }
+  } else {
+    complaints = complaintRows.rows.map(row => row.payload);
+  }
+
+  if (notificationRows.rows.length === 0) {
+    for (const notification of notifications) {
+      await database.query(
+        "INSERT INTO notifications (id, recipient_type, recipient_id, complaint_id, payload, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
+        [notification.id, notification.recipientType, notification.recipientId || null, notification.complaintId, notification, notification.timestamp]
+      );
+    }
+  } else {
+    notifications = notificationRows.rows.map(row => row.payload);
+  }
+}
+
+function persistComplaint(complaint: DBComplaint) {
+  if (!database) return;
+  void database.query(
+    `INSERT INTO complaints (id, student_id, payload, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+    [complaint.id, complaint.studentId, complaint, complaint.createdAt, complaint.updatedAt]
+  ).catch(error => console.error("Failed to persist complaint:", error instanceof Error ? error.message : "database error"));
+}
+
+function persistNotification(notification: DBNotification) {
+  if (!database) return;
+  void database.query(
+    `INSERT INTO notifications (id, recipient_type, recipient_id, complaint_id, payload, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload`,
+    [notification.id, notification.recipientType, notification.recipientId || null, notification.complaintId, notification, notification.timestamp]
+  ).catch(error => console.error("Failed to persist notification:", error instanceof Error ? error.message : "database error"));
+}
+
 // Known student academic metadata helper
 const studentAcademicDirectory: Record<string, { name: string; department: string; year: string }> = {
   "2022CSB1044": { name: "Rahul Sharma", department: "Computer Science & Engineering", year: "3rd Year" },
@@ -894,10 +991,12 @@ Evaluate:
                 category: { type: Type.STRING },
                 priority: { type: Type.STRING },
                 reason: { type: Type.STRING },
+                summary: { type: Type.STRING },
                 recommendedDepartment: { type: Type.STRING },
                 suggestedAction: { type: Type.STRING },
                 estimatedResolutionHours: { type: Type.NUMBER },
-                confidence: { type: Type.NUMBER }
+                confidence: { type: Type.NUMBER },
+                isUrgent: { type: Type.BOOLEAN }
               },
               required: ["category", "priority", "reason", "recommendedDepartment", "suggestedAction"]
             }
@@ -920,7 +1019,8 @@ Evaluate:
             confidence: parsed.confidence || Math.floor(Math.random() * 10) + 90,
             recommendedDepartment: parsed.recommendedDepartment,
             suggestedAction: parsed.suggestedAction,
-            estimatedResolutionHours: parsed.estimatedResolutionHours || (normalizedPriority === 'Critical' ? 4 : normalizedPriority === 'High' ? 24 : 48)
+            estimatedResolutionHours: parsed.estimatedResolutionHours || (normalizedPriority === 'Critical' ? 4 : normalizedPriority === 'High' ? 24 : 48),
+            isUrgent: normalizedPriority === "Critical"
           });
         }
       } catch (geminiError) {
@@ -1404,7 +1504,7 @@ app.get("/api/admin/students", (req, res) => {
 
 // 5. Complaints Endpoints
 app.get("/api/complaints", (req, res) => {
-  const { rollNumber, status, priority, category, search } = req.query;
+  const { rollNumber, status, priority, category, department, date, search } = req.query;
   let results = [...complaints];
 
   if (rollNumber) {
@@ -1423,6 +1523,14 @@ app.get("/api/complaints", (req, res) => {
     results = results.filter(c => c.category === category);
   }
 
+  if (department && department !== "All") {
+    results = results.filter(c => c.department === department);
+  }
+
+  if (date) {
+    results = results.filter(c => c.createdAt.startsWith(date as string));
+  }
+
   if (search) {
     const q = (search as string).toLowerCase();
     results = results.filter(c => 
@@ -1438,7 +1546,11 @@ app.get("/api/complaints", (req, res) => {
   // Sort by latest first
   results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  res.json({ complaints: results, total: results.length });
+  const total = results.length;
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || total || 20));
+  const start = (page - 1) * limit;
+  res.json({ complaints: results.slice(start, start + limit), total, page, limit, totalPages: Math.ceil(total / limit) });
 });
 
 app.get("/api/complaints/:id", (req, res) => {
@@ -1527,6 +1639,7 @@ app.post("/api/complaints", (req, res) => {
     };
 
     complaints.unshift(newComplaint);
+    persistComplaint(newComplaint);
 
     // Create notifications for Student & Admin
     notifications.unshift({
@@ -1551,6 +1664,8 @@ app.post("/api/complaints", (req, res) => {
       read: false,
       type: priority === "Critical" ? "critical" : "status"
     });
+    persistNotification(notifications[0]);
+    persistNotification(notifications[1]);
 
     res.status(201).json({ success: true, complaint: newComplaint });
   } catch (err) {
@@ -1607,6 +1722,7 @@ app.patch("/api/complaints/:id", (req, res) => {
       read: false,
       type: status === "Resolved" ? "resolved" : "status"
     });
+    persistNotification(notifications[0]);
   }
 
   // Priority Change / Override
@@ -1662,21 +1778,23 @@ app.patch("/api/complaints/:id", (req, res) => {
         read: false,
         type: "comment"
       });
+      persistNotification(notifications[0]);
     }
   }
 
   existing.updatedAt = now;
   complaints[index] = existing;
+  persistComplaint(existing);
 
   res.json({ success: true, complaint: existing });
 });
 
 // 6. Analytics Aggregate Endpoint (matching exact numbers in reference UI: 245 total, 28 pending, 197 resolved, 20 critical)
 app.get("/api/analytics", (req, res) => {
-  const total = 245;
-  const pending = 28;
-  const resolved = 197;
-  const critical = 20;
+  const total = complaints.length;
+  const pending = complaints.filter(c => c.status === "Pending" || c.status === "Under Review").length;
+  const resolved = complaints.filter(c => c.status === "Resolved").length;
+  const critical = complaints.filter(c => c.priority === "Critical" && c.status !== "Resolved" && c.status !== "Rejected").length;
 
   // Resolution Progress line data matching the reference chart
   const resolutionProgress = [
@@ -1783,12 +1901,16 @@ app.patch("/api/notifications/:id/read", (req, res) => {
   const notif = notifications.find(n => n.id === req.params.id);
   if (notif) {
     notif.read = true;
+    persistNotification(notif);
   }
   res.json({ success: true });
 });
 
 app.post("/api/notifications/mark-all-read", (req, res) => {
-  notifications.forEach(n => n.read = true);
+  notifications.forEach(n => {
+    n.read = true;
+    persistNotification(n);
+  });
   res.json({ success: true });
 });
 
@@ -1818,4 +1940,10 @@ async function startServer() {
   });
 }
 
-startServer();
+initializeDatabase()
+  .then(hydratePersistentState)
+  .then(startServer)
+  .catch(error => {
+    console.error("Database initialization failed; starting with compatibility cache:", error instanceof Error ? error.message : "database error");
+    startServer();
+  });
