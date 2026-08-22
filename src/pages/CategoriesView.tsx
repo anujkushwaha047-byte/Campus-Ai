@@ -31,9 +31,9 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
     },
     {
       category: "Faculty",
-      lead: "Prof. Ananya Sen (Dean Academics)",
+      lead: "Prof. Sandeep Yadav (Dean Academics)",
       office: "Academic Council Secretariat, Main Building",
-      contact: "dean.academics@campus.edu",
+      contact: "dean.sw.engg@its.edu.in",
       description: "Course delivery, attendance discrepancies, lecture timetable clashes, and academic grievances.",
       sla: "3-5 Business Days",
       color: "from-emerald-500 to-teal-600",

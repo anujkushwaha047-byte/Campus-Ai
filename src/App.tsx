@@ -22,6 +22,7 @@ import { SubmitComplaintModal } from "./components/SubmitComplaintModal";
 import { StudentAuthModal } from "./components/StudentAuthModal";
 import { StudentsManagementView } from "./pages/StudentsManagementView";
 import { CheckCircle2, AlertCircle, Info, Sparkles } from "lucide-react";
+import { apiUrl } from "./api";
 
 // Default Initial Analytics Data (Matches Reference Dashboard Metrics)
 const initialAnalytics: AnalyticsData = {
@@ -91,8 +92,10 @@ export default function App() {
     rollNumber: "2022CSB1044",
     name: "Rahul Sharma",
     email: "rahul.sharma@campus.edu",
+    phone: "9876543210",
     department: "Computer Science & Engineering",
     year: "3rd Year",
+    emailVerified: true,
     isVerified: true,
   });
 
@@ -116,7 +119,7 @@ export default function App() {
   // Fetch initial data from server
   const fetchComplaints = async () => {
     try {
-      const res = await fetch("/api/complaints");
+      const res = await fetch(apiUrl("/api/complaints"));
       const data = await res.json();
       if (Array.isArray(data)) {
         setComplaints(data);
@@ -128,7 +131,7 @@ export default function App() {
 
   const fetchAnalytics = async () => {
     try {
-      const res = await fetch("/api/analytics");
+      const res = await fetch(apiUrl("/api/analytics"));
       const data = await res.json();
       if (data && data.totalComplaints) {
         setAnalytics(data);
@@ -140,7 +143,7 @@ export default function App() {
 
   const fetchNotifications = async () => {
     try {
-      const res = await fetch("/api/notifications");
+      const res = await fetch(apiUrl("/api/notifications"));
       const data = await res.json();
       if (Array.isArray(data)) {
         setNotifications(data);
@@ -196,7 +199,7 @@ export default function App() {
     if (!selectedComplaint) return;
 
     try {
-      const res = await fetch(`/api/complaints/${selectedComplaint.id}`, {
+      const res = await fetch(apiUrl(`/api/complaints/${selectedComplaint.id}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),

@@ -17,6 +17,7 @@ import {
   ArrowLeft
 } from "lucide-react";
 import { StudentProfile } from "../types";
+import { apiUrl } from "../api";
 
 interface StudentLoginPageProps {
   onLoginSuccess: (student: StudentProfile) => void;
@@ -90,7 +91,7 @@ export const StudentLoginPage: React.FC<StudentLoginPageProps> = ({
     setIsSendingOtp(true);
 
     try {
-      const res = await fetch("/api/auth/send-otp", {
+      const res = await fetch(apiUrl("/api/auth/send-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -156,7 +157,7 @@ export const StudentLoginPage: React.FC<StudentLoginPageProps> = ({
     setIsVerifying(true);
 
     try {
-      const res = await fetch("/api/auth/verify-otp", {
+      const res = await fetch(apiUrl("/api/auth/verify-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
@@ -8,8 +9,24 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
+const allowedOrigins = new Set([
+  "http://localhost:3000",
+  "http://localhost:5173",
+  process.env.FRONTEND_URL
+].filter((origin): origin is string => Boolean(origin)));
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error("Origin is not allowed by CORS"));
+  },
+  credentials: true
+}));
 app.use(express.json({ limit: "15mb" }));
 
 // ==========================================

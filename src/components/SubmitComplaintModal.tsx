@@ -15,6 +15,7 @@ import {
 import confetti from "canvas-confetti";
 import { Category, Priority, StudentProfile, Complaint } from "../types";
 import { AIAnalysisCard } from "./AIAnalysisCard";
+import { apiUrl } from "../api";
 
 interface SubmitComplaintModalProps {
   isOpen: boolean;
@@ -83,7 +84,7 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
 
     try {
       // 1. Trigger AI analysis on backend
-      const aiResponse = await fetch("/api/ai/analyze-complaint", {
+      const aiResponse = await fetch(apiUrl("/api/ai/analyze-complaint"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -97,7 +98,7 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
       const aiData = await aiResponse.json();
 
       // 2. Submit new complaint with AI results
-      const res = await fetch("/api/complaints", {
+      const res = await fetch(apiUrl("/api/complaints"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
