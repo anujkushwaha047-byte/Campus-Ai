@@ -15,7 +15,7 @@ import {
 import confetti from "canvas-confetti";
 import { Category, Priority, StudentProfile, Complaint } from "../types";
 import { AIAnalysisCard } from "./AIAnalysisCard";
-import { apiPost } from "../api";
+import { apiPost, hasAuthToken } from "../api";
 
 interface SubmitComplaintModalProps {
   isOpen: boolean;
@@ -80,6 +80,10 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
     }
 
     setErrorMsg("");
+    if (!hasAuthToken()) {
+      setErrorMsg("Please log in again before submitting a complaint.");
+      return;
+    }
     setIsSubmitting(true);
 
     try {

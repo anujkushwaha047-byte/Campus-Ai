@@ -13,8 +13,8 @@ dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
-const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString("hex");
-if (!process.env.AUTH_SECRET) console.warn("AUTH_SECRET is not configured; sessions will reset when the process restarts.");
+const AUTH_SECRET = process.env.AUTH_SECRET || (process.env.NODE_ENV === "production" ? "" : crypto.randomBytes(32).toString("hex"));
+if (!AUTH_SECRET) console.error("AUTH_SECRET is required in production; authentication tokens will be rejected until it is configured.");
 const DEMO_MODE = process.env.DEMO_MODE === "true";
 
 type UserRole = "student" | "warden" | "admin";
@@ -40,6 +40,7 @@ function createAuthToken(user: AuthenticatedUser): string {
 }
 
 function readAuthToken(req: express.Request): AuthenticatedUser | null {
+  if (!AUTH_SECRET) return null;
   const header = req.header("authorization");
   if (!header?.startsWith("Bearer ")) return null;
   const token = header.slice(7);

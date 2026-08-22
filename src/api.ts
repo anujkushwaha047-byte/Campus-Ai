@@ -1,4 +1,6 @@
-const API_URL = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
+const configuredApiUrl = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
+const isLocalApiUrl = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(configuredApiUrl);
+const API_URL = import.meta.env.PROD && isLocalApiUrl ? "" : configuredApiUrl;
 
 export class ApiError extends Error {
   status: number;
@@ -40,6 +42,10 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
     });
     const data = await response.json().catch(() => null);
     if (!response.ok) {
+      if (response.status === 401) {
+        setAuthToken(null);
+        window.dispatchEvent(new Event("campuscare-auth-required"));
+      }
       throw new ApiError(data?.error || `Request failed with status ${response.status}.`, response.status);
     }
     return data as T;

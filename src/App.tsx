@@ -22,7 +22,7 @@ import { SubmitComplaintModal } from "./components/SubmitComplaintModal";
 import { StudentAuthModal } from "./components/StudentAuthModal";
 import { StudentsManagementView } from "./pages/StudentsManagementView";
 import { CheckCircle2, AlertCircle, Info, Sparkles } from "lucide-react";
-import { apiRequest, hasAuthToken } from "./api";
+import { apiRequest, hasAuthToken, setAuthToken } from "./api";
 
 // Default Initial Analytics Data (Matches Reference Dashboard Metrics)
 const initialAnalytics: AnalyticsData = {
@@ -113,6 +113,18 @@ export default function App() {
       fetchAnalytics();
       fetchNotifications();
     }
+  }, []);
+
+  useEffect(() => {
+    const handleAuthRequired = () => {
+      setAuthToken(null);
+      setUserRole("student");
+      setCurrentTab("student_dashboard");
+      setIsAuthModalOpen(true);
+      showToast("Your session expired. Please log in again.", "error");
+    };
+    window.addEventListener("campuscare-auth-required", handleAuthRequired);
+    return () => window.removeEventListener("campuscare-auth-required", handleAuthRequired);
   }, []);
 
   // Sync tab when switching roles

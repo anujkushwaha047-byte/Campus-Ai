@@ -56,6 +56,8 @@ These endpoints use the official ITS Engineering College home, directory, and co
 
 The Render build command remains `npm install && npm run build` and the start command remains `npx tsx server.ts`.
 
+For the single-service Render deployment, leave `VITE_API_URL` unset or set it to the Render URL. Production automatically ignores localhost API values and uses same-origin `/api` requests.
+
 When `DATABASE_URL` is omitted, local development uses the existing in-process compatibility cache; configure PostgreSQL for persistence across restarts and instances.
 
 Render also supports the equivalent Bun commands: `bun install && bun run build` and `bun run start`.
