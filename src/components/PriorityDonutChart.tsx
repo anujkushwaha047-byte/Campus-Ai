@@ -91,18 +91,18 @@ export const PriorityDonutChart: React.FC<PriorityDonutChartProps> = ({
           {data.map((item) => (
             <div
               key={item.name}
-              className="flex items-center justify-between gap-2 text-xs py-1 px-2 rounded-lg hover:bg-slate-50 transition-colors"
+              className="min-w-0 grid grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-2 text-xs py-1 px-2 rounded-lg hover:bg-slate-50 transition-colors"
             >
-              <div className="flex items-center gap-2 min-w-0">
+              <div className="min-w-0 flex items-center gap-2">
                 <span
                   className="w-2.5 h-2.5 rounded-full shrink-0"
                   style={{ backgroundColor: item.color }}
                 />
-                <span className="text-slate-700 font-semibold text-xs whitespace-nowrap">
+                <span className="min-w-0 truncate text-slate-700 font-semibold text-xs" title={item.name}>
                   {item.name}
                 </span>
               </div>
-              <span className="text-slate-900 font-bold shrink-0 text-xs tabular-nums ml-2">
+              <span className="w-10 text-right text-slate-900 font-bold text-xs tabular-nums">
                 {item.percentage}%
               </span>
             </div>
