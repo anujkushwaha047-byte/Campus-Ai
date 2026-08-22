@@ -26,59 +26,14 @@ import { apiRequest, hasAuthToken } from "./api";
 
 // Default Initial Analytics Data (Matches Reference Dashboard Metrics)
 const initialAnalytics: AnalyticsData = {
-  totalComplaints: 245,
-  pendingComplaints: 28,
-  resolvedComplaints: 197,
-  criticalComplaints: 20,
-  priorityDistribution: [
-    { name: "Critical", value: 37, percentage: 15, color: "#EF4444" },
-    { name: "High", value: 73, percentage: 30, color: "#F59E0B" },
-    { name: "Medium", value: 86, percentage: 35, color: "#EAB308" },
-    { name: "Low", value: 49, percentage: 20, color: "#10B981" },
-  ],
-  categoryDistribution: [
-    { name: "Hostel", value: 86, percentage: 35, color: "#146EF5" },
-    { name: "Faculty", value: 49, percentage: 20, color: "#10B981" },
-    { name: "Library", value: 37, percentage: 15, color: "#8B5CF6" },
-    { name: "Examination", value: 29, percentage: 12, color: "#EC4899" },
-    { name: "IT", value: 24, percentage: 10, color: "#06B6D4" },
-    { name: "Other", value: 20, percentage: 8, color: "#F43F5E" },
-  ],
-  resolutionTrends: [
-    { date: "1 May", resolved: 16, target: 20 },
-    { date: "6 May", resolved: 30, target: 35 },
-    { date: "11 May", resolved: 48, target: 50 },
-    { date: "16 May", resolved: 67, target: 70 },
-    { date: "21 May", resolved: 85, target: 85 },
-    { date: "26 May", resolved: 98, target: 100 },
-    { date: "31 May", resolved: 112, target: 115 },
-  ],
-  aiInsights: [
-    {
-      id: "ai-1",
-      type: "critical",
-      iconType: "alert",
-      text: "6 critical complaints require immediate attention.",
-    },
-    {
-      id: "ai-2",
-      type: "increase",
-      iconType: "trend_up",
-      text: "Hostel complaints increased by 18% this week.",
-    },
-    {
-      id: "ai-3",
-      type: "resolution",
-      iconType: "clock",
-      text: "Average resolution time is 2.4 days.",
-    },
-    {
-      id: "ai-4",
-      type: "decrease",
-      iconType: "trend_down",
-      text: "Library complaints decreased by 10% compared to last month.",
-    },
-  ],
+  totalComplaints: 0,
+  pendingComplaints: 0,
+  resolvedComplaints: 0,
+  criticalComplaints: 0,
+  priorityDistribution: [],
+  categoryDistribution: [],
+  resolutionTrends: [],
+  aiInsights: [],
 };
 
 export default function App() {

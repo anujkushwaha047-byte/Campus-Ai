@@ -1,8 +1,6 @@
 import React, { useState } from "react";
 import {
   ResponsiveContainer,
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -19,24 +17,16 @@ interface DataPoint {
 }
 
 interface ResolutionProgressChartProps {
-  data: DataPoint[];
+  data?: DataPoint[] | null;
 }
-
-const defaultResolutionData: DataPoint[] = [
-  { date: "1 May", resolved: 16, target: 20 },
-  { date: "6 May", resolved: 30, target: 35 },
-  { date: "11 May", resolved: 48, target: 50 },
-  { date: "16 May", resolved: 67, target: 70 },
-  { date: "21 May", resolved: 85, target: 90 },
-  { date: "26 May", resolved: 98, target: 105 },
-  { date: "31 May", resolved: 112, target: 120 },
-];
 
 export const ResolutionProgressChart: React.FC<ResolutionProgressChartProps> = ({
   data,
 }) => {
   const [timeframe, setTimeframe] = useState("This Month");
-  const chartData = (data && data.length > 0) ? data : defaultResolutionData;
+  const chartData = (data || []).filter((item) =>
+    item && typeof item.date === "string" && Number.isFinite(item.resolved) && item.resolved >= 0
+  );
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
@@ -87,11 +77,11 @@ export const ResolutionProgressChart: React.FC<ResolutionProgressChartProps> = (
 
       {/* Recharts Chart Area */}
       <div className="w-full flex-1 min-h-[220px] sm:min-h-[250px] pt-2">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart
-            data={chartData}
-            margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-          >
+        {chartData.length === 0 ? (
+          <div className="h-full min-h-[220px] flex items-center justify-center text-xs text-slate-400">No resolution data available</div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
             <defs>
               <linearGradient id="colorResolved" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#146EF5" stopOpacity={0.22} />
@@ -137,8 +127,9 @@ export const ResolutionProgressChart: React.FC<ResolutionProgressChartProps> = (
                 strokeWidth: 2,
               }}
             />
-          </AreaChart>
-        </ResponsiveContainer>
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
       </div>
     </div>
   );

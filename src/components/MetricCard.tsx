@@ -5,7 +5,7 @@ interface MetricCardProps {
   id?: string;
   title: string;
   value: number | string;
-  changePct: number;
+  changePct?: number;
   comparisonText?: string;
   icon: LucideIcon;
   variant: "blue" | "orange" | "green" | "red";
@@ -52,7 +52,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   };
 
   const currentVariant = variantStyles[variant];
-  const isPositive = changePct >= 0;
+  const isPositive = (changePct ?? 0) >= 0;
 
   // In complaint context, if pending/critical decreases, that's good (green trend), or if resolved increases that's good.
   const isGoodTrend =
@@ -88,7 +88,8 @@ export const MetricCard: React.FC<MetricCardProps> = ({
       </div>
 
       {/* Bottom Trend Row */}
-      <div className="flex items-center gap-1.5 text-xs font-medium pt-1">
+      {changePct !== undefined && (
+        <div className="flex items-center gap-1.5 text-xs font-medium pt-1">
         <span
           className={`inline-flex items-center font-bold ${
             isGoodTrend ? "text-emerald-600" : "text-rose-600"
@@ -104,7 +105,8 @@ export const MetricCard: React.FC<MetricCardProps> = ({
         <span className="text-slate-400 font-normal">
           {comparisonText}
         </span>
-      </div>
+        </div>
+      )}
     </div>
   );
 };

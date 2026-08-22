@@ -10,7 +10,7 @@ interface PriorityDataPoint {
 }
 
 interface PriorityDonutChartProps {
-  data: PriorityDataPoint[];
+  data?: PriorityDataPoint[] | null;
   totalComplaints: number;
 }
 
@@ -18,6 +18,10 @@ export const PriorityDonutChart: React.FC<PriorityDonutChartProps> = ({
   data,
   totalComplaints,
 }) => {
+  const safeTotalComplaints = Number.isFinite(totalComplaints) ? totalComplaints : 0;
+  const chartData = (data || []).filter((item) =>
+    item && typeof item.name === "string" && Number.isFinite(item.value) && item.value >= 0
+  );
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const item = payload[0].payload;
@@ -55,30 +59,34 @@ export const PriorityDonutChart: React.FC<PriorityDonutChartProps> = ({
       <div className="flex-1 flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-5 py-2">
         {/* Recharts Donut */}
         <div className="relative w-32 h-32 shrink-0 flex items-center justify-center">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Tooltip content={<CustomTooltip />} />
-              <Pie
-                data={data}
-                cx="50%"
-                cy="50%"
-                innerRadius={38}
-                outerRadius={56}
-                paddingAngle={3}
-                dataKey="value"
-                strokeWidth={0}
-              >
-                {data.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-            </PieChart>
-          </ResponsiveContainer>
+          {chartData.length > 0 && chartData.some((item) => item.value > 0) ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Tooltip content={<CustomTooltip />} />
+                <Pie
+                  data={chartData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={38}
+                  outerRadius={56}
+                  paddingAngle={3}
+                  dataKey="value"
+                  strokeWidth={0}
+                >
+                  {chartData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color || "#94A3B8"} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <span className="text-xs text-slate-400 text-center px-2">No priority data</span>
+          )}
 
           {/* Centered Total Label */}
           <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
             <span className="text-lg font-extrabold text-slate-900 leading-tight">
-              {totalComplaints}
+              {safeTotalComplaints}
             </span>
             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
               Total
@@ -88,7 +96,7 @@ export const PriorityDonutChart: React.FC<PriorityDonutChartProps> = ({
 
         {/* Legend List */}
         <div className="flex-1 min-w-0 w-full space-y-1.5">
-          {data.map((item) => (
+          {chartData.map((item) => (
             <div
               key={item.name}
               className="min-w-0 grid grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-2 text-xs py-1 px-2 rounded-lg hover:bg-slate-50 transition-colors"
@@ -96,7 +104,7 @@ export const PriorityDonutChart: React.FC<PriorityDonutChartProps> = ({
               <div className="min-w-0 flex items-center gap-2">
                 <span
                   className="w-2.5 h-2.5 rounded-full shrink-0"
-                  style={{ backgroundColor: item.color }}
+                  style={{ backgroundColor: item.color || "#94A3B8" }}
                 />
                 <span className="min-w-0 truncate text-slate-700 font-semibold text-xs" title={item.name}>
                   {item.name}
