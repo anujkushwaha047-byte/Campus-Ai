@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Search,
   Filter,
@@ -10,10 +10,13 @@ import {
   Eye,
   Building,
   RotateCcw,
-  Sparkles
+  Sparkles,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 import { Complaint, Category, Priority, ComplaintStatus } from "../types";
 import { PriorityBadge, StatusBadge } from "../components/PriorityBadge";
+import { apiGet } from "../api";
 
 interface ComplaintsListViewProps {
   complaints: Complaint[];
@@ -32,6 +35,14 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
   const [categoryFilter, setCategoryFilter] = useState<string>(initialFilter?.category || "all");
   const [priorityFilter, setPriorityFilter] = useState<string>(initialFilter?.priority || "all");
   const [statusFilter, setStatusFilter] = useState<string>(initialFilter?.status || "all");
+  const [departmentFilter, setDepartmentFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [pageComplaints, setPageComplaints] = useState<Complaint[]>(complaints);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const categories: Category[] = [
     "Hostel",
@@ -48,23 +59,33 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
   const priorities: Priority[] = ["Critical", "High", "Medium", "Low"];
   const statuses: ComplaintStatus[] = ["Pending", "Under Review", "In Progress", "Resolved", "Rejected"];
 
-  const filteredComplaints = useMemo(() => {
-    return complaints.filter((c) => {
-      const matchesSearch =
-        search === "" ||
-        c.title.toLowerCase().includes(search.toLowerCase()) ||
-        c.id.toLowerCase().includes(search.toLowerCase()) ||
-        c.studentName.toLowerCase().includes(search.toLowerCase()) ||
-        c.studentRoll.toLowerCase().includes(search.toLowerCase()) ||
-        c.aiReason.toLowerCase().includes(search.toLowerCase());
+  useEffect(() => {
+    const timer = window.setTimeout(async () => {
+      setIsLoading(true);
+      setErrorMessage("");
+      const params = new URLSearchParams({ page: String(page), limit: "20" });
+      if (search.trim()) params.set("search", search.trim());
+      if (categoryFilter !== "all") params.set("category", categoryFilter);
+      if (priorityFilter !== "all") params.set("priority", priorityFilter);
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      if (departmentFilter !== "all") params.set("department", departmentFilter);
+      if (dateFilter) params.set("date", dateFilter);
+      try {
+        const data = await apiGet<{ complaints: Complaint[]; total: number; totalPages: number }>(`/api/complaints?${params}`);
+        setPageComplaints(data.complaints || []);
+        setTotal(data.total || 0);
+        setTotalPages(Math.max(1, data.totalPages || 1));
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Unable to load complaints. Please try again.");
+        setPageComplaints([]);
+      } finally {
+        setIsLoading(false);
+      }
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [page, search, categoryFilter, priorityFilter, statusFilter, departmentFilter, dateFilter]);
 
-      const matchesCategory = categoryFilter === "all" || c.category === categoryFilter;
-      const matchesPriority = priorityFilter === "all" || c.priority === priorityFilter;
-      const matchesStatus = statusFilter === "all" || c.status === statusFilter;
-
-      return matchesSearch && matchesCategory && matchesPriority && matchesStatus;
-    });
-  }, [complaints, search, categoryFilter, priorityFilter, statusFilter]);
+  const filteredComplaints = isLoading ? [] : pageComplaints;
 
   const handleExportCSV = () => {
     const headers = ["ID", "Student", "Roll", "Category", "Priority", "Status", "Title", "Date", "AI_Reason"];
@@ -95,6 +116,9 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
     setCategoryFilter("all");
     setPriorityFilter("all");
     setStatusFilter("all");
+    setDepartmentFilter("all");
+    setDateFilter("");
+    setPage(1);
   };
 
   return (
@@ -107,7 +131,7 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
               {title}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Showing {filteredComplaints.length} of {complaints.length} total logged complaints
+              Showing {filteredComplaints.length} of {total} total logged complaints
             </p>
           </div>
 
@@ -130,7 +154,7 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
             <input
               type="text"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               placeholder="Search by ID, keyword..."
               className="w-full pl-9 pr-3 py-2 text-xs bg-[#F7F9FC] border border-[#E5EAF1] rounded-xl text-slate-900 focus:bg-white focus:border-[#146EF5]"
             />
@@ -140,7 +164,7 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
           <div>
             <select
               value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
+              onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }}
               className="w-full px-3 py-2 text-xs bg-[#F7F9FC] border border-[#E5EAF1] rounded-xl font-medium text-slate-700 focus:bg-white focus:border-[#146EF5]"
             >
               <option value="all">All Categories</option>
@@ -156,7 +180,7 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
           <div>
             <select
               value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value)}
+              onChange={(e) => { setPriorityFilter(e.target.value); setPage(1); }}
               className="w-full px-3 py-2 text-xs bg-[#F7F9FC] border border-[#E5EAF1] rounded-xl font-medium text-slate-700 focus:bg-white focus:border-[#146EF5]"
             >
               <option value="all">All Priorities</option>
@@ -172,7 +196,7 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
           <div>
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
               className="w-full px-3 py-2 text-xs bg-[#F7F9FC] border border-[#E5EAF1] rounded-xl font-medium text-slate-700 focus:bg-white focus:border-[#146EF5]"
             >
               <option value="all">All Statuses</option>
@@ -183,6 +207,23 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
               ))}
             </select>
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+          <select
+            value={departmentFilter}
+            onChange={(e) => { setDepartmentFilter(e.target.value); setPage(1); }}
+            className="w-full px-3 py-2 text-xs bg-[#F7F9FC] border border-[#E5EAF1] rounded-xl font-medium text-slate-700 focus:bg-white focus:border-[#146EF5]"
+          >
+            <option value="all">All Departments</option>
+            {[...new Set(complaints.map(complaint => complaint.department))].filter(Boolean).map(department => <option key={department} value={department}>{department}</option>)}
+          </select>
+          <input
+            type="date"
+            value={dateFilter}
+            onChange={(e) => { setDateFilter(e.target.value); setPage(1); }}
+            className="w-full px-3 py-2 text-xs bg-[#F7F9FC] border border-[#E5EAF1] rounded-xl font-medium text-slate-700 focus:bg-white focus:border-[#146EF5]"
+          />
         </div>
 
         {/* Active Filter Tags */}
@@ -219,7 +260,11 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
       <div className="bg-white rounded-2xl border border-[#E5EAF1] shadow-xs overflow-hidden">
         {/* Mobile View (< sm screens) */}
         <div className="sm:hidden divide-y divide-slate-100">
-          {filteredComplaints.length === 0 ? (
+          {isLoading ? (
+            <div className="p-12 text-center text-slate-400 text-xs">Loading complaints...</div>
+          ) : errorMessage ? (
+            <div className="p-12 text-center text-rose-600 text-xs">{errorMessage}</div>
+          ) : filteredComplaints.length === 0 ? (
             <div className="p-12 text-center text-slate-400 text-xs">
               No complaints matched your filter criteria.
             </div>
@@ -303,7 +348,11 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium">
-              {filteredComplaints.length === 0 ? (
+              {isLoading ? (
+                <tr><td colSpan={8} className="py-12 text-center text-slate-400 text-xs">Loading complaints...</td></tr>
+              ) : errorMessage ? (
+                <tr><td colSpan={8} className="py-12 text-center text-rose-600 text-xs">{errorMessage}</td></tr>
+              ) : filteredComplaints.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-12 text-center text-slate-400 text-xs">
                     No complaints matched your filter criteria.
@@ -390,6 +439,15 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
           </table>
         </div>
       </div>
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between bg-white rounded-2xl border border-[#E5EAF1] px-4 py-3 text-xs">
+          <span className="text-slate-500">Page {page} of {totalPages} ({total} complaints)</span>
+          <div className="flex items-center gap-2">
+            <button disabled={page === 1} onClick={() => setPage(current => Math.max(1, current - 1))} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="w-4 h-4" /></button>
+            <button disabled={page === totalPages} onClick={() => setPage(current => Math.min(totalPages, current + 1))} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40" aria-label="Next page"><ChevronRight className="w-4 h-4" /></button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

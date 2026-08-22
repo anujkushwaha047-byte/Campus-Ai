@@ -17,7 +17,7 @@ import {
   ArrowLeft
 } from "lucide-react";
 import { StudentProfile } from "../types";
-import { apiUrl } from "../api";
+import { apiUrl, setAuthToken } from "../api";
 
 interface StudentLoginPageProps {
   onLoginSuccess: (student: StudentProfile) => void;
@@ -170,6 +170,7 @@ export const StudentLoginPage: React.FC<StudentLoginPageProps> = ({
 
       const data = await res.json();
       if (data.success && data.student) {
+        setAuthToken(data.token);
         setVerifiedStudent(data.student);
         setStep("success");
         setTimeout(() => {

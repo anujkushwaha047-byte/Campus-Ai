@@ -52,6 +52,7 @@ export interface Complaint {
   studentEmail: string;
   studentDepartment: string;
   studentYear: string;
+  course?: string;
   title: string;
   description: string;
   category: Category;
@@ -82,6 +83,7 @@ export interface StudentProfile {
   phone: string;
   department: string;
   year: string;
+  course?: string;
   avatar?: string;
   emailVerified: boolean;
   isVerified?: boolean;
@@ -119,6 +121,9 @@ export interface AIAnalysisResult {
   reason: string;
   confidence?: number;
   recommendedDepartment?: string;
+  department?: string;
+  summary?: string;
+  isUrgent?: boolean;
   suggestedAction?: string;
   estimatedResolutionHours?: number;
 }

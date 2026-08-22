@@ -90,6 +90,7 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
         reason?: string;
         confidence?: number;
         recommendedDepartment?: string;
+        department?: string;
       } = {};
       try {
         aiData = await apiPost("/api/ai/analyze-complaint", {
@@ -97,6 +98,8 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
           description: description.trim(),
           category,
           location: location.trim(),
+          course: studentProfile?.course,
+          department: studentProfile?.department,
         });
       } catch (aiError) {
         console.warn("AI analysis unavailable; saving with fallback classification.", aiError);
@@ -110,13 +113,14 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
           studentEmail: studentProfile?.email || "student@college.edu.in",
           studentDepartment: studentProfile?.department || "Computer Science",
           studentYear: studentProfile?.year || "3rd Year",
+          course: studentProfile?.course,
           title: title.trim(),
           description: description.trim(),
           category: aiData.category || category,
           priority: aiData.priority || "Medium",
           aiReason: aiData.reason || "Analyzed by CampusCare AI Engine.",
           aiConfidence: aiData.confidence || 96,
-          department: aiData.recommendedDepartment || `${category} Support Department`,
+          department: aiData.department || aiData.recommendedDepartment || `${category} Support Department`,
           location: location.trim() || "Main Campus",
           attachments: files,
       });

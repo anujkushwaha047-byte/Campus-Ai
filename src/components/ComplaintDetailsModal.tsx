@@ -20,7 +20,7 @@ import { Complaint, Priority, ComplaintStatus } from "../types";
 import { PriorityBadge, StatusBadge } from "./PriorityBadge";
 import { AIAnalysisCard } from "./AIAnalysisCard";
 import { ComplaintTimeline } from "./ComplaintTimeline";
-import { apiUrl } from "../api";
+import { apiRequest } from "../api";
 
 interface ComplaintDetailsModalProps {
   complaint: Complaint | null;
@@ -89,12 +89,10 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
   const handleRequestAiResolution = async () => {
     setIsSuggestingAi(true);
     try {
-      const res = await fetch(apiUrl("/api/ai/suggest-resolution"), {
+      const data = await apiRequest<{ resolutionSummary: string; internalNotes: string; preventativeAction: string }>("/api/ai/suggest-resolution", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ complaintId: complaint.id }),
       });
-      const data = await res.json();
       setAiDraft(data);
     } catch (err) {
       console.error("Failed to generate AI resolution:", err);

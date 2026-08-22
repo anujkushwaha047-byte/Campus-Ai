@@ -22,7 +22,7 @@ import { SubmitComplaintModal } from "./components/SubmitComplaintModal";
 import { StudentAuthModal } from "./components/StudentAuthModal";
 import { StudentsManagementView } from "./pages/StudentsManagementView";
 import { CheckCircle2, AlertCircle, Info, Sparkles } from "lucide-react";
-import { apiUrl } from "./api";
+import { apiRequest, hasAuthToken } from "./api";
 
 // Default Initial Analytics Data (Matches Reference Dashboard Metrics)
 const initialAnalytics: AnalyticsData = {
@@ -95,6 +95,7 @@ export default function App() {
     phone: "9876543210",
     department: "Computer Science & Engineering",
     year: "3rd Year",
+    course: "BTECH_CSE",
     emailVerified: true,
     isVerified: true,
   });
@@ -118,11 +119,11 @@ export default function App() {
 
   // Fetch initial data from server
   const fetchComplaints = async () => {
+    if (!hasAuthToken()) return;
     try {
-      const res = await fetch(apiUrl("/api/complaints"));
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setComplaints(data);
+      const data = await apiRequest<{ complaints?: Complaint[] }>("/api/complaints");
+      if (Array.isArray(data.complaints)) {
+        setComplaints(data.complaints);
       }
     } catch (err) {
       console.warn("Using local complaints cache");
@@ -131,8 +132,7 @@ export default function App() {
 
   const fetchAnalytics = async () => {
     try {
-      const res = await fetch(apiUrl("/api/analytics"));
-      const data = await res.json();
+      const data = await apiRequest<AnalyticsData>("/api/analytics");
       if (data && data.totalComplaints) {
         setAnalytics(data);
       }
@@ -143,10 +143,9 @@ export default function App() {
 
   const fetchNotifications = async () => {
     try {
-      const res = await fetch(apiUrl("/api/notifications"));
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setNotifications(data);
+      const data = await apiRequest<{ notifications?: NotificationItem[] }>("/api/notifications");
+      if (Array.isArray(data.notifications)) {
+        setNotifications(data.notifications);
       }
     } catch (err) {
       console.warn("Using local notifications cache");
@@ -154,9 +153,11 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchComplaints();
-    fetchAnalytics();
-    fetchNotifications();
+    if (hasAuthToken()) {
+      fetchComplaints();
+      fetchAnalytics();
+      fetchNotifications();
+    }
   }, []);
 
   // Sync tab when switching roles
@@ -199,12 +200,10 @@ export default function App() {
     if (!selectedComplaint) return;
 
     try {
-      const res = await fetch(apiUrl(`/api/complaints/${selectedComplaint.id}`), {
+      const data = await apiRequest<{ success?: boolean; complaint?: Complaint }>(`/api/complaints/${selectedComplaint.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
       });
-      const data = await res.json();
 
       if (data.success && data.complaint) {
         setSelectedComplaint(data.complaint);
@@ -441,6 +440,7 @@ export default function App() {
               studentProfile={studentProfile}
               complaints={complaints}
               onLogout={handleLogout}
+              onCourseChange={(course) => setStudentProfile((profile) => profile ? { ...profile, course } : profile)}
             />
           )}
 
@@ -506,6 +506,8 @@ export default function App() {
           setStudentProfile(student);
           setUserRole("student");
           setCurrentTab("student_dashboard");
+          fetchComplaints();
+          fetchNotifications();
           showToast(`Logged in as ${student.name} (${student.rollNumber})`);
         }}
       />

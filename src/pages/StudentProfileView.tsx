@@ -1,17 +1,20 @@
 import React from "react";
 import { User, Mail, GraduationCap, Building2, Phone, Bell, Shield, Key } from "lucide-react";
 import { StudentProfile, Complaint } from "../types";
+import { COLLEGE_COURSES } from "../collegeData";
 
 interface StudentProfileViewProps {
   studentProfile: StudentProfile | null;
   complaints: Complaint[];
   onLogout: () => void;
+  onCourseChange?: (course: string) => void;
 }
 
 export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
   studentProfile,
   complaints,
   onLogout,
+  onCourseChange,
 }) => {
   const myComplaints = complaints.filter(
     (c) =>
@@ -54,6 +57,24 @@ export const StudentProfileView: React.FC<StudentProfileViewProps> = ({
                 <strong className="text-emerald-900">{resolved}</strong>
               </div>
             </div>
+          </div>
+
+          <div className="mt-4 max-w-md text-left">
+            <label htmlFor="student-course" className="text-xs font-semibold text-slate-500">Course</label>
+            <select
+              id="student-course"
+              value={studentProfile?.course || ""}
+              onChange={(event) => onCourseChange?.(event.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700"
+            >
+              <option value="">Select course</option>
+              {COLLEGE_COURSES.map(course => (
+                <option key={course.code} value={course.code}>{course.name}{course.verified ? "" : " (information pending verification)"}</option>
+              ))}
+            </select>
+            {studentProfile?.course && !COLLEGE_COURSES.find(course => course.code === studentProfile.course)?.verified && (
+              <p className="mt-1 text-[11px] text-amber-700">Official course information not verified</p>
+            )}
           </div>
         </div>
 

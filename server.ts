@@ -6,11 +6,70 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { Pool } from "pg";
+import crypto from "crypto";
+import { COLLEGE_COURSES, COLLEGE_DIRECTORY, COLLEGE_DEPARTMENTS, COLLEGE_INFORMATION, OFFICIAL_SOURCE_URLS, WARDEN_CONTACT, getCourse, getCourseDepartment } from "./src/collegeData";
 
 dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+const AUTH_SECRET = process.env.AUTH_SECRET || "campuscare-development-secret-change-me";
+
+type UserRole = "student" | "warden" | "admin";
+interface AuthenticatedUser {
+  id: string;
+  role: UserRole;
+  rollNumber?: string;
+  name?: string;
+}
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: AuthenticatedUser;
+    }
+  }
+}
+
+function createAuthToken(user: AuthenticatedUser): string {
+  const payload = Buffer.from(JSON.stringify({ ...user, exp: Date.now() + 8 * 60 * 60 * 1000 })).toString("base64url");
+  const signature = crypto.createHmac("sha256", AUTH_SECRET).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function readAuthToken(req: express.Request): AuthenticatedUser | null {
+  const header = req.header("authorization");
+  if (!header?.startsWith("Bearer ")) return null;
+  const token = header.slice(7);
+  const [payload, signature] = token.split(".");
+  if (!payload || !signature) return null;
+  const expected = crypto.createHmac("sha256", AUTH_SECRET).update(payload).digest("base64url");
+  if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as AuthenticatedUser & { exp?: number };
+    if (!parsed.id || !parsed.role || !parsed.exp || parsed.exp < Date.now()) return null;
+    if (!["student", "warden", "admin"].includes(parsed.role)) return null;
+    return { id: parsed.id, role: parsed.role, rollNumber: parsed.rollNumber, name: parsed.name };
+  } catch {
+    return null;
+  }
+}
+
+function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const user = readAuthToken(req);
+  if (!user) return res.status(401).json({ success: false, error: "Authentication is required." });
+  req.user = user;
+  next();
+}
+
+function requireRole(...roles: UserRole[]) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ success: false, error: "You do not have permission to perform this action." });
+    }
+    next();
+  };
+}
 
 const allowedOrigins = new Set([
   "http://localhost:3000",
@@ -60,6 +119,23 @@ async function initializeDatabase() {
       created_at TIMESTAMPTZ NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS complaint_comments (
+      id TEXT PRIMARY KEY,
+      complaint_id TEXT NOT NULL REFERENCES complaints(id) ON DELETE CASCADE,
+      author TEXT NOT NULL,
+      role TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS complaint_timeline (
+      id TEXT PRIMARY KEY,
+      complaint_id TEXT NOT NULL REFERENCES complaints(id) ON DELETE CASCADE,
+      stage TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS notifications (
       id TEXT PRIMARY KEY,
       recipient_type TEXT NOT NULL,
@@ -70,6 +146,8 @@ async function initializeDatabase() {
     );
     CREATE INDEX IF NOT EXISTS complaints_created_at_idx ON complaints (created_at DESC);
     CREATE INDEX IF NOT EXISTS complaints_student_id_idx ON complaints (student_id);
+    CREATE INDEX IF NOT EXISTS complaint_comments_complaint_idx ON complaint_comments (complaint_id, created_at);
+    CREATE INDEX IF NOT EXISTS complaint_timeline_complaint_idx ON complaint_timeline (complaint_id, created_at);
     CREATE INDEX IF NOT EXISTS notifications_recipient_idx ON notifications (recipient_type, recipient_id);
   `);
 }
@@ -316,6 +394,53 @@ function getGeminiClient(): GoogleGenAI | null {
     });
   }
   return geminiClient;
+}
+
+const AI_CATEGORIES = ["Hostel", "Faculty", "Library", "Examination", "IT", "Infrastructure", "Transport", "Fees", "Other"] as const;
+const AI_PRIORITIES = ["Critical", "High", "Medium", "Low"] as const;
+function getOfficialComplaintDepartment(category?: string, course?: string): string {
+  const courseDepartment = getCourseDepartment(course);
+  if (courseDepartment) return courseDepartment;
+  if (category === "Hostel") return WARDEN_CONTACT.available ? "Warden/Hostel" : "Unassigned - official warden contact unavailable";
+  return "Unassigned - official department not verified";
+}
+
+type StructuredAIAnalysis = {
+  category: typeof AI_CATEGORIES[number];
+  priority: typeof AI_PRIORITIES[number];
+  confidence: number;
+  department: string;
+  summary: string;
+  suggestedAction: string;
+  isUrgent: boolean;
+  reason: string;
+  recommendedDepartment: string;
+};
+
+function validateAIAnalysis(value: unknown, selectedCategory?: string): StructuredAIAnalysis | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const categoryValue = typeof candidate.category === "string" ? candidate.category : "";
+  const priorityValue = typeof candidate.priority === "string" ? candidate.priority : "";
+  const category = AI_CATEGORIES.find(item => item.toLowerCase() === categoryValue.toLowerCase());
+  const priority = AI_PRIORITIES.find(item => item.toLowerCase() === priorityValue.toLowerCase());
+  const confidence = typeof candidate.confidence === "number" ? candidate.confidence : NaN;
+  const department = typeof candidate.department === "string" ? candidate.department.trim() : "";
+  const summary = typeof candidate.summary === "string" ? candidate.summary.trim() : "";
+  const suggestedAction = typeof candidate.suggestedAction === "string" ? candidate.suggestedAction.trim() : "";
+  if (!category || !priority || !Number.isFinite(confidence) || confidence < 0 || confidence > 100 || !department || !summary || !suggestedAction || typeof candidate.isUrgent !== "boolean") return null;
+  const normalizedCategory = category || (AI_CATEGORIES.includes(selectedCategory as typeof AI_CATEGORIES[number]) ? selectedCategory as typeof AI_CATEGORIES[number] : "Other");
+  return {
+    category: normalizedCategory,
+    priority,
+    confidence: Math.round(confidence),
+    department,
+    summary,
+    suggestedAction,
+    isUrgent: candidate.isUrgent,
+    reason: summary,
+    recommendedDepartment: department
+  };
 }
 
 // In-Memory Database
@@ -881,13 +1006,20 @@ async function hydratePersistentState() {
 
   if (complaintRows.rows.length === 0) {
     for (const complaint of complaints) {
-      await database.query(
-        "INSERT INTO complaints (id, student_id, payload, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
-        [complaint.id, complaint.studentId, complaint, complaint.createdAt, complaint.updatedAt]
-      );
+      await persistComplaint(complaint);
     }
   } else {
     complaints = complaintRows.rows.map(row => row.payload);
+  }
+
+  for (const student of readStudentsFromCsv()) {
+    const academic = studentAcademicDirectory[student.roll_number.toUpperCase()];
+    await database.query(
+      `INSERT INTO users (id, roll_number, email, phone, name, department, year, email_verified)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (id) DO UPDATE SET phone = EXCLUDED.phone, email_verified = EXCLUDED.email_verified`,
+      [student.student_id, student.roll_number, student.email, student.phone, academic?.name || "Student", academic?.department || "General Department", academic?.year || "Enrolled", student.email_verified === "true"]
+    );
   }
 
   if (notificationRows.rows.length === 0) {
@@ -902,14 +1034,28 @@ async function hydratePersistentState() {
   }
 }
 
-function persistComplaint(complaint: DBComplaint) {
+async function persistComplaint(complaint: DBComplaint) {
   if (!database) return;
-  void database.query(
+  await database.query(
     `INSERT INTO complaints (id, student_id, payload, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
     [complaint.id, complaint.studentId, complaint, complaint.createdAt, complaint.updatedAt]
-  ).catch(error => console.error("Failed to persist complaint:", error instanceof Error ? error.message : "database error"));
+  );
+  await database.query("DELETE FROM complaint_comments WHERE complaint_id = $1", [complaint.id]);
+  for (const comment of complaint.comments || []) {
+    await database.query(
+      "INSERT INTO complaint_comments (id, complaint_id, author, role, message, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
+      [comment.id, complaint.id, comment.author, comment.role, comment.message, comment.timestamp]
+    );
+  }
+  await database.query("DELETE FROM complaint_timeline WHERE complaint_id = $1", [complaint.id]);
+  for (const item of complaint.timeline || []) {
+    await database.query(
+      "INSERT INTO complaint_timeline (id, complaint_id, stage, title, description, actor, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING",
+      [item.id, complaint.id, item.stage, item.title, item.description, item.actor, item.timestamp]
+    );
+  }
 }
 
 function persistNotification(notification: DBNotification) {
@@ -920,6 +1066,48 @@ function persistNotification(notification: DBNotification) {
      ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload`,
     [notification.id, notification.recipientType, notification.recipientId || null, notification.complaintId, notification, notification.timestamp]
   ).catch(error => console.error("Failed to persist notification:", error instanceof Error ? error.message : "database error"));
+}
+
+async function readComplaintsForUser(user: AuthenticatedUser): Promise<DBComplaint[]> {
+  if (!database) {
+    if (user.role === "student") return complaints.filter(c => c.studentId === user.id);
+    if (user.role === "warden") return complaints.filter(c => c.assignedTo === user.id || c.assignedTo === user.name);
+    return complaints;
+  }
+
+  const conditions: string[] = [];
+  const values: string[] = [];
+  if (user.role === "student") {
+    values.push(user.id);
+    conditions.push(`student_id = $${values.length}`);
+  } else if (user.role === "warden") {
+    values.push(user.id, user.name || "");
+    conditions.push(`(payload->>'assignedTo' = $${values.length - 1} OR payload->>'assignedTo' = $${values.length})`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const rows = await database.query<{ payload: DBComplaint }>(`SELECT payload FROM complaints ${where} ORDER BY created_at DESC`, values);
+  return rows.rows.map(row => row.payload);
+}
+
+async function readComplaintForUser(id: string, user: AuthenticatedUser): Promise<DBComplaint | null> {
+  if (!database) {
+    const complaint = complaints.find(item => item.id === id);
+    if (!complaint) return null;
+    if (user.role === "student" && complaint.studentId !== user.id) return null;
+    if (user.role === "warden" && complaint.assignedTo !== user.id && complaint.assignedTo !== user.name) return null;
+    return complaint;
+  }
+  const values: string[] = [id];
+  let ownership = "";
+  if (user.role === "student") {
+    values.push(user.id);
+    ownership = ` AND student_id = $${values.length}`;
+  } else if (user.role === "warden") {
+    values.push(user.id, user.name || "");
+    ownership = ` AND (payload->>'assignedTo' = $${values.length - 1} OR payload->>'assignedTo' = $${values.length})`;
+  }
+  const result = await database.query<{ payload: DBComplaint }>(`SELECT payload FROM complaints WHERE id = $1${ownership}`, values);
+  return result.rows[0]?.payload || null;
 }
 
 // Known student academic metadata helper
@@ -941,10 +1129,22 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+app.get("/api/college/courses", (req, res) => {
+  res.json({ courses: COLLEGE_COURSES, source: OFFICIAL_SOURCE_URLS.courses });
+});
+
+app.get("/api/college/directory", (req, res) => {
+  res.json({ college: COLLEGE_INFORMATION, directory: COLLEGE_DIRECTORY, warden: WARDEN_CONTACT, source: OFFICIAL_SOURCE_URLS.directory });
+});
+
+app.get("/api/college/departments", (req, res) => {
+  res.json({ departments: COLLEGE_DEPARTMENTS, source: OFFICIAL_SOURCE_URLS.directory });
+});
+
 // 1. AI Analysis Endpoint (Gemini 3.7 Flash)
-app.post("/api/ai/analyze-complaint", async (req, res) => {
+app.post("/api/ai/analyze-complaint", requireAuth, async (req, res) => {
   try {
-    const { title, description, category, location } = req.body;
+    const { title, description, category, location, course, department: studentDepartment } = req.body;
 
     if (!title || !description) {
       return res.status(400).json({ error: "Title and description are required for AI analysis." });
@@ -960,6 +1160,10 @@ Analyze the following student complaint with extreme precision.
 Complaint Title: "${title}"
 Selected Category by Student: "${category || 'Unspecified'}"
 Location: "${location || 'Not provided'}"
+Student Course: "${course || 'Not provided'}"
+Student Department: "${studentDepartment || 'Not provided'}"
+Verified routing context: ${JSON.stringify(COLLEGE_COURSES.filter(item => item.verified).map(item => ({ name: item.name, department: item.department })))}
+Verified directory contacts are available at ${OFFICIAL_SOURCE_URLS.directory}; do not invent contact details.
 Description:
 """
 ${description}
@@ -973,7 +1177,7 @@ Evaluate:
    - "Low": Minor inconvenience, book inquiries, aesthetic fixes, general feedback, non-urgent suggestions.
 2. Verified Category: ('Hostel', 'Faculty', 'Library', 'Examination', 'IT', 'Infrastructure', 'Transport', 'Fees', 'Other')
 3. Reason: A concise, professional 1-2 sentence explanation of why this priority and category were assigned.
-4. Recommended Department: Recommended campus office/department.
+4. Department: Recommended campus office/department.
 5. Suggested Action: Concrete 1-sentence action step for administrators.
 6. Estimated Resolution Hours: Realistic hours number (e.g. 4 for Critical, 24 for High, 48 for Medium, 72 for Low).
 7. Confidence: A percentage number between 85 and 99.
@@ -992,36 +1196,28 @@ Evaluate:
                 priority: { type: Type.STRING },
                 reason: { type: Type.STRING },
                 summary: { type: Type.STRING },
-                recommendedDepartment: { type: Type.STRING },
+                department: { type: Type.STRING },
                 suggestedAction: { type: Type.STRING },
                 estimatedResolutionHours: { type: Type.NUMBER },
                 confidence: { type: Type.NUMBER },
                 isUrgent: { type: Type.BOOLEAN }
               },
-              required: ["category", "priority", "reason", "recommendedDepartment", "suggestedAction"]
+              required: ["category", "priority", "confidence", "department", "summary", "suggestedAction", "isUrgent"]
             }
           }
         });
 
         if (response.text) {
-          const parsed = JSON.parse(response.text);
-          // Normalize priority
-          const validPriorities = ["Critical", "High", "Medium", "Low"];
-          const normalizedPriority = validPriorities.find(p => p.toLowerCase() === (parsed.priority || "").toLowerCase()) || "Medium";
-
-          const validCategories = ["Hostel", "Faculty", "Library", "Examination", "IT", "Infrastructure", "Transport", "Fees", "Other"];
-          const normalizedCategory = validCategories.find(c => c.toLowerCase() === (parsed.category || "").toLowerCase()) || (category || "Other");
-
-          return res.json({
-            category: normalizedCategory,
-            priority: normalizedPriority,
-            reason: parsed.reason,
-            confidence: parsed.confidence || Math.floor(Math.random() * 10) + 90,
-            recommendedDepartment: parsed.recommendedDepartment,
-            suggestedAction: parsed.suggestedAction,
-            estimatedResolutionHours: parsed.estimatedResolutionHours || (normalizedPriority === 'Critical' ? 4 : normalizedPriority === 'High' ? 24 : 48),
-            isUrgent: normalizedPriority === "Critical"
-          });
+          const validated = validateAIAnalysis(JSON.parse(response.text), category);
+          if (validated) {
+            validated.department = getOfficialComplaintDepartment(validated.category, course);
+            validated.recommendedDepartment = validated.department;
+            return res.json({
+              ...validated,
+              estimatedResolutionHours: validated.priority === "Critical" ? 4 : validated.priority === "High" ? 24 : 48
+            });
+          }
+          console.warn("Gemini returned an invalid complaint analysis; applying fallback.");
         }
       } catch (geminiError) {
         console.error("Gemini API call error, applying smart heuristic engine:", geminiError);
@@ -1107,13 +1303,19 @@ Evaluate:
       department = "Estate & Civil Works";
     }
 
+    department = getOfficialComplaintDepartment(detectedCategory, course) || department;
+    const summary = reason;
+
     return res.json({
       category: detectedCategory,
       priority,
       reason,
       confidence: 94,
+      department,
+      summary,
       recommendedDepartment: department,
       suggestedAction: action,
+      isUrgent: priority === "Critical",
       estimatedResolutionHours: priority === "Critical" ? 4 : priority === "High" ? 24 : 48
     });
   } catch (error: any) {
@@ -1123,7 +1325,7 @@ Evaluate:
 });
 
 // 2. AI Operational Insights & Strategic Recommendations
-app.post("/api/ai/generate-insights", async (req, res) => {
+app.post("/api/ai/generate-insights", requireAuth, requireRole("admin", "warden"), async (req, res) => {
   try {
     const ai = getGeminiClient();
     const totalCount = complaints.length;
@@ -1217,7 +1419,7 @@ JSON Format:
 });
 
 // 3. AI Resolution Drafting Helper for Admins
-app.post("/api/ai/suggest-resolution", async (req, res) => {
+app.post("/api/ai/suggest-resolution", requireAuth, requireRole("admin", "warden"), async (req, res) => {
   try {
     const { complaintId } = req.body;
     const complaint = complaints.find(c => c.id === complaintId);
@@ -1365,7 +1567,7 @@ app.post("/api/auth/verify-otp", (req, res) => {
       };
       return res.json({
         success: true,
-        token: `auth_jwt_${cleanRoll}_${Date.now()}`,
+        token: createAuthToken({ id: existingInCsv.student_id, role: "student", rollNumber: existingInCsv.roll_number, name: academicInfo.name }),
         student: {
           id: existingInCsv.student_id,
           studentId: existingInCsv.student_id,
@@ -1446,16 +1648,38 @@ app.post("/api/auth/verify-otp", (req, res) => {
 
   console.log(`[AUTH] Student authenticated: ${csvRecord.student_id} (${csvRecord.roll_number}) - isNew: ${isNew}`);
 
+  const studentToken = createAuthToken({ id: csvRecord.student_id, role: "student", rollNumber: csvRecord.roll_number, name: academic.name });
+  if (database) {
+    void database.query(
+      `INSERT INTO users (id, roll_number, email, phone, name, department, year, role, email_verified)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'student', true)
+       ON CONFLICT (id) DO UPDATE SET phone = EXCLUDED.phone, email_verified = true`,
+      [csvRecord.student_id, csvRecord.roll_number, csvRecord.email, csvRecord.phone, academic.name, academic.department, academic.year]
+    ).catch(error => console.error("Failed to persist authenticated student:", error instanceof Error ? error.message : "database error"));
+  }
+
   return res.json({
     success: true,
-    token: `auth_jwt_${cleanRoll}_${Date.now()}`,
+    token: studentToken,
     isNewRegistration: isNew,
     student: studentProfile
   });
 });
 
+app.post("/api/auth/staff-login", (req, res) => {
+  const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  const password = typeof req.body.password === "string" ? req.body.password : "";
+  const staff = [
+    { role: "admin" as const, email: process.env.ADMIN_EMAIL?.toLowerCase(), password: process.env.ADMIN_PASSWORD },
+    { role: "warden" as const, email: process.env.WARDEN_EMAIL?.toLowerCase(), password: process.env.WARDEN_PASSWORD }
+  ].find(account => account.email && account.password && account.email === email && account.password === password);
+
+  if (!staff) return res.status(401).json({ success: false, error: "Invalid staff credentials." });
+  return res.json({ success: true, token: createAuthToken({ id: email, role: staff.role, name: staff.role === "admin" ? "Administrator" : "Warden" }), role: staff.role });
+});
+
 // Admin: Get all registered students from students.csv with their complaint count
-app.get("/api/admin/students", (req, res) => {
+app.get("/api/admin/students", requireAuth, requireRole("admin"), (req, res) => {
   try {
     const csvStudents = readStudentsFromCsv();
     const studentList = csvStudents.map(s => {
@@ -1503,9 +1727,9 @@ app.get("/api/admin/students", (req, res) => {
 
 
 // 5. Complaints Endpoints
-app.get("/api/complaints", (req, res) => {
+app.get("/api/complaints", requireAuth, async (req, res) => {
   const { rollNumber, status, priority, category, department, date, search } = req.query;
-  let results = [...complaints];
+  let results = await readComplaintsForUser(req.user!);
 
   if (rollNumber) {
     results = results.filter(c => c.studentRoll.toUpperCase() === (rollNumber as string).toUpperCase());
@@ -1548,20 +1772,45 @@ app.get("/api/complaints", (req, res) => {
 
   const total = results.length;
   const page = Math.max(1, Number(req.query.page) || 1);
-  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || total || 20));
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
   const start = (page - 1) * limit;
   res.json({ complaints: results.slice(start, start + limit), total, page, limit, totalPages: Math.ceil(total / limit) });
 });
 
-app.get("/api/complaints/:id", (req, res) => {
-  const complaint = complaints.find(c => c.id === req.params.id);
+app.get("/api/complaints/:id", requireAuth, async (req, res) => {
+  const complaint = await readComplaintForUser(req.params.id, req.user!);
   if (!complaint) {
-    return res.status(404).json({ error: "Complaint not found" });
+    return res.status(404).json({ success: false, error: "Complaint not found" });
   }
   res.json({ complaint });
 });
 
-app.post("/api/complaints", (req, res) => {
+app.get("/api/complaints/:id/comments", requireAuth, async (req, res) => {
+  const complaint = await readComplaintForUser(req.params.id, req.user!);
+  if (!complaint) return res.status(404).json({ success: false, error: "Complaint not found" });
+  res.json({ comments: complaint.comments || [] });
+});
+
+app.post("/api/complaints/:id/comments", requireAuth, async (req, res) => {
+  const complaint = await readComplaintForUser(req.params.id, req.user!);
+  if (!complaint) return res.status(404).json({ success: false, error: "Complaint not found" });
+  const message = typeof req.body.message === "string" ? req.body.message.trim() : "";
+  if (!message) return res.status(400).json({ success: false, error: "Comment message is required." });
+  const comment: DBComment = {
+    id: `comm-${Date.now()}`,
+    author: req.user?.name || (req.user?.role === "student" ? complaint.studentName : "Administrator"),
+    role: req.user?.role === "student" ? "student" : req.user?.role === "warden" ? "officer" : "admin",
+    message,
+    timestamp: new Date().toISOString()
+  };
+  complaint.comments = [...(complaint.comments || []), comment];
+  const index = complaints.findIndex(item => item.id === complaint.id);
+  if (index >= 0) complaints[index] = complaint;
+  await persistComplaint(complaint);
+  res.status(201).json({ success: true, comment, complaint });
+});
+
+app.post("/api/complaints", requireAuth, async (req, res) => {
   try {
     const {
       studentId,
@@ -1570,6 +1819,7 @@ app.post("/api/complaints", (req, res) => {
       studentEmail,
       studentDepartment,
       studentYear,
+      course,
       title,
       description,
       category,
@@ -1591,9 +1841,9 @@ app.post("/api/complaints", (req, res) => {
 
     const newComplaint: DBComplaint = {
       id: newId,
-      studentId: studentId || `STU-${Date.now().toString().slice(-4)}`,
+      studentId: req.user?.role === "student" ? req.user.id : (studentId || `STU-${Date.now().toString().slice(-4)}`),
       studentName: studentName || "Student",
-      studentRoll: studentRoll || "2024CS001",
+      studentRoll: req.user?.role === "student" ? (req.user.rollNumber || "") : (studentRoll || "2024CS001"),
       studentEmail: studentEmail || "student@campus.edu",
       studentDepartment: studentDepartment || "Computer Science",
       studentYear: studentYear || "3rd Year",
@@ -1604,7 +1854,7 @@ app.post("/api/complaints", (req, res) => {
       aiReason: aiReason || "Analyzed by CampusCare AI Engine.",
       aiConfidence: aiConfidence || 95,
       status: "Pending",
-      department: department || `${category || 'General'} Support Department`,
+      department: getOfficialComplaintDepartment(category, course),
       location: location || "Campus Main Grounds",
       attachments: attachments || [],
       createdAt: now,
@@ -1639,7 +1889,7 @@ app.post("/api/complaints", (req, res) => {
     };
 
     complaints.unshift(newComplaint);
-    persistComplaint(newComplaint);
+    await persistComplaint(newComplaint);
 
     // Create notifications for Student & Admin
     notifications.unshift({
@@ -1675,16 +1925,23 @@ app.post("/api/complaints", (req, res) => {
 });
 
 // Update Complaint Status, Priority, Assignment, or Add Comment
-app.patch("/api/complaints/:id", (req, res) => {
+app.patch("/api/complaints/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
   const index = complaints.findIndex(c => c.id === id);
 
-  if (index === -1) {
-    return res.status(404).json({ error: "Complaint not found" });
+  const existing = await readComplaintForUser(id, req.user!);
+  if (!existing || (index === -1 && !database)) {
+    return res.status(404).json({ success: false, error: "Complaint not found" });
   }
-
-  const existing = complaints[index];
-  const { status, priority, department, assignedTo, assignedOfficerRole, overrideNote, newComment, author, role } = req.body;
+  const { status, priority, department, assignedTo, assignedOfficerRole, overrideNote, newComment } = req.body;
+  const isStudentOwner = req.user?.role === "student" && (existing.studentId === req.user.id || existing.studentRoll.toUpperCase() === req.user.rollNumber?.toUpperCase());
+  const isAssignedWarden = req.user?.role === "warden" && (existing.assignedTo === req.user.id || existing.assignedTo === req.user.name);
+  if (req.user?.role === "student" && !isStudentOwner) return res.status(403).json({ success: false, error: "You can only update your own complaints." });
+  if (req.user?.role === "warden" && !isAssignedWarden) return res.status(403).json({ success: false, error: "You can only update complaints assigned to you." });
+  if (req.user?.role === "student" && (status || priority || department || assignedTo || assignedOfficerRole)) return res.status(403).json({ success: false, error: "Students may only add comments to complaints." });
+  if (req.user?.role === "warden" && (priority || department || assignedTo || assignedOfficerRole)) return res.status(403).json({ success: false, error: "Wardens may update status and comments on assigned complaints." });
+  const effectiveAuthor = req.user?.name || (req.user?.role === "student" ? existing.studentName : "Administrator");
+  const effectiveRole = req.user?.role === "student" ? "student" : req.user?.role === "warden" ? "officer" : "admin";
   const now = new Date().toISOString();
 
   // Status Change
@@ -1708,7 +1965,7 @@ app.patch("/api/complaints/:id", (req, res) => {
       title: `Status Changed to ${status}`,
       description: overrideNote || `Status updated to ${status} by administrator.`,
       timestamp: now,
-      actor: author || "Super Administrator"
+      actor: effectiveAuthor
     });
 
     notifications.unshift({
@@ -1737,7 +1994,7 @@ app.patch("/api/complaints/:id", (req, res) => {
       title: `Priority Updated to ${priority}`,
       description: existing.overrideNote,
       timestamp: now,
-      actor: author || "Super Administrator"
+      actor: effectiveAuthor
     });
   }
 
@@ -1752,7 +2009,7 @@ app.patch("/api/complaints/:id", (req, res) => {
       title: `Assigned to ${assignedTo}`,
       description: `Task assigned to ${assignedTo} (${existing.assignedOfficerRole})`,
       timestamp: now,
-      actor: author || "Super Administrator"
+      actor: effectiveAuthor
     });
   }
 
@@ -1760,20 +2017,20 @@ app.patch("/api/complaints/:id", (req, res) => {
   if (newComment) {
     existing.comments.push({
       id: `comm-${Date.now()}`,
-      author: author || (role === "student" ? existing.studentName : "Administrator"),
-      role: role || "admin",
+      author: effectiveAuthor,
+      role: effectiveRole,
       message: newComment,
       timestamp: now
     });
 
-    if (role === "admin" || role === "officer") {
+    if (effectiveRole === "admin" || effectiveRole === "officer") {
       notifications.unshift({
         id: `notif-${Date.now()}-c`,
         recipientType: "student",
         recipientId: existing.studentId,
         complaintId: existing.id,
         title: "New Note on Your Complaint",
-        message: `${author || 'Officer'}: "${newComment.slice(0, 60)}..."`,
+        message: `${effectiveAuthor}: "${newComment.slice(0, 60)}..."`,
         timestamp: now,
         read: false,
         type: "comment"
@@ -1783,84 +2040,64 @@ app.patch("/api/complaints/:id", (req, res) => {
   }
 
   existing.updatedAt = now;
-  complaints[index] = existing;
-  persistComplaint(existing);
+  if (index >= 0) complaints[index] = existing;
+  void persistComplaint(existing).catch(error => console.error("Failed to persist complaint update:", error instanceof Error ? error.message : "database error"));
 
   res.json({ success: true, complaint: existing });
 });
 
 // 6. Analytics Aggregate Endpoint (matching exact numbers in reference UI: 245 total, 28 pending, 197 resolved, 20 critical)
-app.get("/api/analytics", (req, res) => {
+app.get("/api/analytics", requireAuth, requireRole("admin", "warden"), (req, res) => {
   const total = complaints.length;
   const pending = complaints.filter(c => c.status === "Pending" || c.status === "Under Review").length;
   const resolved = complaints.filter(c => c.status === "Resolved").length;
   const critical = complaints.filter(c => c.priority === "Critical" && c.status !== "Resolved" && c.status !== "Rejected").length;
 
-  // Resolution Progress line data matching the reference chart
-  const resolutionProgress = [
-    { date: "1 May", resolved: 16, target: 20 },
-    { date: "6 May", resolved: 30, target: 35 },
-    { date: "11 May", resolved: 48, target: 50 },
-    { date: "16 May", resolved: 67, target: 70 },
-    { date: "21 May", resolved: 85, target: 90 },
-    { date: "26 May", resolved: 98, target: 105 },
-    { date: "31 May", resolved: 112, target: 120 }
-  ];
-
-  // AI Priority Distribution donut
-  const priorityDistribution = [
-    { name: "Critical", value: 37, percentage: 15, color: "#EF4444" },
-    { name: "High", value: 74, percentage: 30, color: "#F97316" },
-    { name: "Medium", value: 85, percentage: 35, color: "#EAB308" },
-    { name: "Low", value: 49, percentage: 20, color: "#22C55E" }
-  ];
-
-  // Complaint Categories donut
-  const categoryDistribution = [
-    { name: "Hostel", value: 86, percentage: 35, color: "#3B82F6" },
-    { name: "Faculty", value: 49, percentage: 20, color: "#22C55E" },
-    { name: "Library", value: 37, percentage: 15, color: "#A855F7" },
-    { name: "Examination", value: 29, percentage: 12, color: "#EC4899" },
-    { name: "IT", value: 24, percentage: 10, color: "#06B6D4" },
-    { name: "Others", value: 20, percentage: 8, color: "#F43F5E" }
-  ];
-
-  const statusDistribution = [
-    { name: "Pending", value: 28, color: "#F97316" },
-    { name: "Under Review", value: 14, color: "#3B82F6" },
-    { name: "In Progress", value: 32, color: "#8B5CF6" },
-    { name: "Resolved", value: 197, color: "#22C55E" },
-    { name: "Rejected", value: 6, color: "#EF4444" }
-  ];
+  const colors = ["#3B82F6", "#22C55E", "#A855F7", "#EC4899", "#06B6D4", "#F43F5E"];
+  const distribution = (values: string[]) => values.map((name, index) => {
+    const value = complaints.filter(complaint => complaint.category === name || complaint.priority === name || complaint.status === name).length;
+    return { name, value, percentage: total ? Math.round((value / total) * 100) : 0, color: colors[index % colors.length] };
+  });
+  const priorityDistribution = distribution(["Critical", "High", "Medium", "Low"]);
+  const categoryDistribution = distribution(["Hostel", "Faculty", "Library", "Examination", "IT", "Infrastructure", "Transport", "Fees", "Other"]);
+  const statusDistribution = distribution(["Pending", "Under Review", "In Progress", "Resolved", "Rejected"]);
+  const dateKeys = [...new Set(complaints.map(complaint => complaint.createdAt.slice(0, 10)))].sort().slice(-7);
+  const resolutionProgress = dateKeys.map(date => ({
+    date,
+    resolved: complaints.filter(complaint => complaint.resolvedAt && complaint.resolvedAt.slice(0, 10) <= date).length
+  }));
+  const topCategory = categoryDistribution.reduce((top, item) => item.value > top.value ? item : top, categoryDistribution[0] || { name: "No category", value: 0 });
+  const resolutionTimes = complaints.filter(complaint => complaint.resolvedAt).map(complaint => new Date(complaint.resolvedAt!).getTime() - new Date(complaint.createdAt).getTime());
+  const averageResolutionDays = resolutionTimes.length ? (resolutionTimes.reduce((sum, value) => sum + value, 0) / resolutionTimes.length / 86400000).toFixed(1) : "0.0";
 
   const aiInsights = [
     {
       id: "ins-1",
       type: "critical" as const,
       iconType: "alert" as const,
-      text: "6 critical complaints require immediate attention.",
-      highlightText: "6 critical complaints"
+      text: `${critical} critical complaints require immediate attention.`,
+      highlightText: `${critical} critical complaints`
     },
     {
       id: "ins-2",
       type: "increase" as const,
       iconType: "trend_up" as const,
-      text: "Hostel complaints increased by 18% this week.",
-      highlightText: "increased by 18%"
+      text: `${topCategory.name} is the most common complaint category with ${topCategory.value} cases.`,
+      highlightText: `${topCategory.value} ${topCategory.name} cases`
     },
     {
       id: "ins-3",
       type: "resolution" as const,
       iconType: "clock" as const,
-      text: "Average resolution time is 2.4 days.",
-      highlightText: "2.4 days"
+      text: `Average resolution time is ${averageResolutionDays} days across resolved complaints.`,
+      highlightText: `${averageResolutionDays} days`
     },
     {
       id: "ins-4",
       type: "decrease" as const,
       iconType: "trend_down" as const,
-      text: "Library complaints decreased by 10% compared to last month.",
-      highlightText: "decreased by 10%"
+      text: `${pending} complaints are currently pending or under review.`,
+      highlightText: `${pending} pending complaints`
     }
   ];
 
@@ -1869,10 +2106,6 @@ app.get("/api/analytics", (req, res) => {
     pendingComplaints: pending,
     resolvedComplaints: resolved,
     criticalComplaints: critical,
-    totalChangePct: 12.5,
-    pendingChangePct: -5.3,
-    resolvedChangePct: 18.7,
-    criticalChangePct: -2.1,
     resolutionTrends: resolutionProgress,
     resolutionProgress: resolutionProgress,
     priorityDistribution,
@@ -1883,7 +2116,7 @@ app.get("/api/analytics", (req, res) => {
 });
 
 // 7. Notifications API
-app.get("/api/notifications", (req, res) => {
+app.get("/api/notifications", requireAuth, (req, res) => {
   const { recipientType, recipientId } = req.query;
   let results = [...notifications];
 
@@ -1893,21 +2126,30 @@ app.get("/api/notifications", (req, res) => {
   if (recipientId) {
     results = results.filter(n => !n.recipientId || n.recipientId === recipientId);
   }
+  if (req.user?.role === "student") {
+    results = results.filter(n => n.recipientType === "student" && n.recipientId === req.user.id);
+  } else if (req.user?.role === "warden") {
+    results = results.filter(n => n.recipientType === "admin" || n.recipientId === req.user.id);
+  }
 
   res.json({ notifications: results });
 });
 
-app.patch("/api/notifications/:id/read", (req, res) => {
+app.patch("/api/notifications/:id/read", requireAuth, (req, res) => {
   const notif = notifications.find(n => n.id === req.params.id);
-  if (notif) {
+  const canRead = notif && (req.user?.role === "admin" || (notif.recipientType === "student" && notif.recipientId === req.user?.id) || (req.user?.role === "warden" && (notif.recipientType === "admin" || notif.recipientId === req.user.id)));
+  if (canRead) {
     notif.read = true;
     persistNotification(notif);
   }
   res.json({ success: true });
 });
 
-app.post("/api/notifications/mark-all-read", (req, res) => {
-  notifications.forEach(n => {
+app.post("/api/notifications/mark-all-read", requireAuth, (req, res) => {
+  const visible = req.user?.role === "student"
+    ? notifications.filter(n => n.recipientType === "student" && n.recipientId === req.user.id)
+    : notifications.filter(n => n.recipientType === "admin" || n.recipientId === req.user?.id);
+  visible.forEach(n => {
     n.read = true;
     persistNotification(n);
   });
@@ -1915,7 +2157,7 @@ app.post("/api/notifications/mark-all-read", (req, res) => {
 });
 
 // 8. Reset Data to Demo State
-app.post("/api/reset-data", (req, res) => {
+app.post("/api/reset-data", requireAuth, requireRole("admin"), (req, res) => {
   res.json({ success: true, message: "Database refreshed to demonstration baseline." });
 });
 

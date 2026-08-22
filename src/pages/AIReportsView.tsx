@@ -14,7 +14,7 @@ import {
   FileSpreadsheet
 } from "lucide-react";
 import { AnalyticsData, Complaint } from "../types";
-import { apiUrl } from "../api";
+import { apiRequest } from "../api";
 
 interface AIReportsViewProps {
   analytics: AnalyticsData;
@@ -35,12 +35,10 @@ export const AIReportsView: React.FC<AIReportsViewProps> = ({
 
     setIsGenerating(true);
     try {
-      const res = await fetch(apiUrl("/api/ai/generate-insights"), {
+      const data = await apiRequest<{ customAnalysis?: string; summary?: string }>("/api/ai/generate-insights", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: aiPrompt }),
       });
-      const data = await res.json();
       setCustomReport(data.customAnalysis || data.summary || "Analysis completed based on current database state.");
     } catch (err) {
       console.error(err);

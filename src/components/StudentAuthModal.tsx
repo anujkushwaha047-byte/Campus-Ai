@@ -13,7 +13,7 @@ import {
   X
 } from "lucide-react";
 import { StudentProfile } from "../types";
-import { apiUrl } from "../api";
+import { apiUrl, setAuthToken } from "../api";
 
 interface StudentAuthModalProps {
   isOpen: boolean;
@@ -156,6 +156,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
 
       const data = await res.json();
       if (data.success && data.student) {
+        setAuthToken(data.token);
         onLoginSuccess(data.student);
         onClose();
       } else {

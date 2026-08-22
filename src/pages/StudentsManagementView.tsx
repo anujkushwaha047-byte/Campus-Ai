@@ -18,7 +18,7 @@ import {
   Filter
 } from "lucide-react";
 import { Complaint } from "../types";
-import { apiUrl } from "../api";
+import { apiRequest } from "../api";
 
 export interface AdminStudentItem {
   id: string;
@@ -61,8 +61,7 @@ export const StudentsManagementView: React.FC<StudentsManagementViewProps> = ({
   const fetchStudents = async () => {
     try {
       setIsRefreshing(true);
-      const res = await fetch(apiUrl("/api/admin/students"));
-      const data = await res.json();
+      const data = await apiRequest<{ students?: AdminStudentItem[] }>("/api/admin/students");
       if (data && Array.isArray(data.students)) {
         setStudents(data.students);
       }

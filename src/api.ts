@@ -14,6 +14,17 @@ export function apiUrl(path: string): string {
   return `${API_URL}${path}`;
 }
 
+const AUTH_TOKEN_KEY = "campuscare_auth_token";
+
+export function setAuthToken(token: string | null): void {
+  if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
+  else localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+export function hasAuthToken(): boolean {
+  return Boolean(localStorage.getItem(AUTH_TOKEN_KEY));
+}
+
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 15000);
@@ -21,7 +32,11 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
     const response = await fetch(apiUrl(path), {
       ...options,
       signal: controller.signal,
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(localStorage.getItem(AUTH_TOKEN_KEY) ? { Authorization: `Bearer ${localStorage.getItem(AUTH_TOKEN_KEY)}` } : {}),
+        ...(options.headers || {})
+      },
     });
     const data = await response.json().catch(() => null);
     if (!response.ok) {
