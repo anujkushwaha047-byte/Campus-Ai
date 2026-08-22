@@ -13,7 +13,9 @@ dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
-const AUTH_SECRET = process.env.AUTH_SECRET || "campuscare-development-secret-change-me";
+const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString("hex");
+if (!process.env.AUTH_SECRET) console.warn("AUTH_SECRET is not configured; sessions will reset when the process restarts.");
+const DEMO_MODE = process.env.DEMO_MODE === "true";
 
 type UserRole = "student" | "warden" | "admin";
 interface AuthenticatedUser {
@@ -79,7 +81,9 @@ const allowedOrigins = new Set([
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin)) {
+    const isLocalDevelopmentOrigin = Boolean(origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin));
+    const isRenderOrigin = origin === "https://campus-ai-qgwx.onrender.com";
+    if (!origin || allowedOrigins.has(origin) || isLocalDevelopmentOrigin || isRenderOrigin) {
       callback(null, true);
       return;
     }
@@ -1539,7 +1543,7 @@ app.post("/api/auth/send-otp", (req, res) => {
     success: true,
     message: `A 6-digit verification code has been dispatched to ${masked}`,
     maskedEmail: masked,
-    demoOtp: generatedOtp, // Convenience for interactive AI Studio preview
+    ...(DEMO_MODE ? { demoOtp: generatedOtp } : {}),
     expiresInSeconds: 300
   });
 });
@@ -1556,10 +1560,10 @@ app.post("/api/auth/verify-otp", (req, res) => {
   const enteredOtp = otp.trim();
 
   // Check if OTP exists
-  if (!stored && enteredOtp !== "123456") {
+  if (!stored && !(DEMO_MODE && enteredOtp === "123456")) {
     // If testing in demo mode and student exists in CSV
     const existingInCsv = findStudentInCsv(cleanRoll, email);
-    if (existingInCsv && enteredOtp === "123456") {
+    if (DEMO_MODE && existingInCsv && enteredOtp === "123456") {
       const academicInfo = studentAcademicDirectory[cleanRoll] || {
         name: existingInCsv.email.split("@")[0].replace(".", " ").replace(/\b\w/g, l => l.toUpperCase()),
         department: "Engineering & Technology",
@@ -1602,7 +1606,7 @@ app.post("/api/auth/verify-otp", (req, res) => {
     }
   }
 
-  const isOtpValid = (stored && stored.otp === enteredOtp) || enteredOtp === "123456";
+  const isOtpValid = (stored && stored.otp === enteredOtp) || (DEMO_MODE && enteredOtp === "123456");
 
   if (!isOtpValid) {
     return res.status(400).json({ 
@@ -2182,10 +2186,9 @@ async function startServer() {
   });
 }
 
+startServer();
 initializeDatabase()
   .then(hydratePersistentState)
-  .then(startServer)
   .catch(error => {
-    console.error("Database initialization failed; starting with compatibility cache:", error instanceof Error ? error.message : "database error");
-    startServer();
+    console.error("Database initialization failed; using compatibility cache:", error instanceof Error ? error.message : "database error");
   });

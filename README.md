@@ -20,6 +20,7 @@ View your app in AI Studio: https://ai.studio/apps/b8873a46-cc52-4a9a-97c5-8dccc
    `DATABASE_URL=your_postgres_connection_string`
    `VITE_API_URL=http://localhost:3000`
    `AUTH_SECRET=long_random_server_secret`
+   `DEMO_MODE=false`
 3. Run the app:
    `npm run dev`
 
