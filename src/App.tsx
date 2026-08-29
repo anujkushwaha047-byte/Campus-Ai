@@ -21,7 +21,7 @@ import { ComplaintDetailsModal } from "./components/ComplaintDetailsModal";
 import { SubmitComplaintModal } from "./components/SubmitComplaintModal";
 import { StudentAuthModal } from "./components/StudentAuthModal";
 import { StudentsManagementView } from "./pages/StudentsManagementView";
-import { LandingPage } from "./components/LandingPage";
+import LandingPageModern from "./components/LandingPageModern";
 import { CheckCircle2, AlertCircle, Info, Sparkles } from "lucide-react";
 
 // Default Initial Analytics Data (Matches Reference Dashboard Metrics)
@@ -284,7 +284,7 @@ export default function App() {
   // Show LandingPage when not authenticated
   if (!studentProfile) {
     return (
-      <LandingPage onLoginSuccess={handleLandingPageLogin} />
+      <LandingPageModern onLoginSuccess={handleLandingPageLogin} />
     );
   }
 
