@@ -1,16 +1,26 @@
-# 🎓 Campus-Ai — AI-Powered University Grievance Redressal System
+# 🎓 CampusCare — AI-Powered University Complaint Management System
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-campus--ai--qgwx.onrender.com-blue?style=for-the-badge&logo=render)](https://campus-ai-qgwx.onrender.com)
-[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
-[![Powered By](https://img.shields.io/badge/AI-Google%20Gemini%202.5-orange?style=for-the-badge&logo=google)](https://ai.google.dev/)
+[![Institution](https://img.shields.io/badge/Institution-I.T.S%20Engineering%20College-red?style=for-the-badge)](https://itsengg.edu.in/public/)
+[![Powered By](https://img.shields.io/badge/AI-Google%20Gemini%20API-orange?style=for-the-badge&logo=google)](https://ai.google.dev/)
 
 > **Live Deployment:** [https://campus-ai-qgwx.onrender.com](https://campus-ai-qgwx.onrender.com)
 
 ---
 
+## 👥 Student Project Team (CSE AIML)
+
+1. 🌟 **Anuj Kushwaha** — **Lead Student Developer**
+2. **Ankit Kumar Singh** — Student Developer
+3. **Abhinav Tiwari** — Student Developer
+
+**Institution:** I.T.S Engineering College, 46 Knowledge Park III, Greater Noida
+
+---
+
 ## 🌟 Overview
 
-**Campus-Ai** is an enterprise-grade, intelligent grievance redressal and campus issue management platform engineered for universities and collegiate institutions. It bridges students, faculty, and administrative departments through AI-driven triage, transparent SLA tracking, and real-time resolution workflows.
+**CampusCare** is an enterprise-grade, intelligent grievance redressal and campus issue management platform engineered for universities and collegiate institutions. It bridges students, faculty, and administrative departments through AI-driven triage, transparent SLA tracking, and real-time resolution workflows.
 
 ---
 
