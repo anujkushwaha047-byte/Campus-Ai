@@ -462,7 +462,7 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
                 {currentTab.toUpperCase()} Module
               </h3>
               <p className="text-xs text-slate-500">
-                This administrative section is fully synchronized with the CampusCare live engine. All complaint and AI analytics data are active in the primary dashboard.
+                This administrative section is fully synchronized with the Campus-Ai live engine. All complaint and AI analytics data are active in the primary dashboard.
               </p>
               <button
                 onClick={() => setCurrentTab(userRole === "admin" ? "dashboard" : "student_dashboard")}
@@ -517,6 +517,16 @@ export default function App() {
     return session ? session.student : null;
   });
 
+  // Keep state in sync with localStorage across tabs or updates
+  useEffect(() => {
+    const handleStorageChange = () => {
+      const session = getStoredAuth();
+      setStudentProfile(session ? session.student : null);
+    };
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
+
   const handleLoginSuccess = (student: StudentProfile) => {
     setStudentProfile(student);
   };
@@ -526,13 +536,15 @@ export default function App() {
     setStudentProfile(null);
   };
 
+  const isUserAuth = isAuthenticated() && !!studentProfile;
+
   return (
     <BrowserRouter>
       <Routes>
         <Route
           path="/login"
           element={
-            isAuthenticated() && studentProfile ? (
+            isUserAuth ? (
               <Navigate to="/dashboard" replace />
             ) : (
               <LoginPage onLoginSuccess={handleLoginSuccess} />
@@ -551,10 +563,28 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        {/* Default route redirect */}
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        {/* Default route: show /login when unauthenticated, /dashboard when authenticated */}
+        <Route
+          path="/"
+          element={
+            isUserAuth ? (
+              <Navigate to="/dashboard" replace />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
         {/* Wildcard catch-all */}
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route
+          path="*"
+          element={
+            isUserAuth ? (
+              <Navigate to="/dashboard" replace />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
       </Routes>
     </BrowserRouter>
   );

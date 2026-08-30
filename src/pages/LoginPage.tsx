@@ -20,7 +20,9 @@ import {
   CheckCircle,
   ExternalLink,
   ChevronDown,
-  Info
+  Info,
+  Zap,
+  UserCheck
 } from "lucide-react";
 import { StudentProfile } from "../types";
 import { saveStoredAuth, isAuthenticated } from "../utils/auth";
@@ -48,6 +50,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const [countdown, setCountdown] = useState(30);
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isDemoLoggingIn, setIsDemoLoggingIn] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [demoCode, setDemoCode] = useState("");
   const [verifiedStudent, setVerifiedStudent] = useState<StudentProfile | null>(null);
@@ -60,6 +63,55 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     }
     return () => clearInterval(timer);
   }, [step, countdown]);
+
+  // 1-Click Instant Demo Login
+  const handleInstantDemoLogin = async (demoRoll = "23AIML001", demoEmail = "student@college.edu.in", demoPhone = "9876543210") => {
+    setErrorMsg("");
+    setIsDemoLoggingIn(true);
+    try {
+      const sendRes = await fetch("/api/auth/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rollNumber: demoRoll,
+          email: demoEmail,
+          phone: demoPhone,
+        }),
+      });
+      const sendData = await sendRes.json();
+      const codeToUse = sendData.demoOtp || "123456";
+
+      const verifyRes = await fetch("/api/auth/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rollNumber: demoRoll,
+          email: demoEmail,
+          phone: demoPhone,
+          otp: codeToUse,
+        }),
+      });
+      const verifyData = await verifyRes.json();
+
+      if (verifyData.success && verifyData.student) {
+        setVerifiedStudent(verifyData.student);
+        setStep("success");
+        const token = verifyData.token || `auth_token_demo_${Date.now()}`;
+        saveStoredAuth(token, verifyData.student);
+
+        setTimeout(() => {
+          onLoginSuccess(verifyData.student);
+          navigate("/dashboard", { replace: true });
+        }, 800);
+      } else {
+        setErrorMsg(verifyData.error || "Demo authentication failed. Please try standard login.");
+      }
+    } catch (err) {
+      setErrorMsg("Failed to connect to backend server for demo login.");
+    } finally {
+      setIsDemoLoggingIn(false);
+    }
+  };
 
   // Step 1: Submit Student Details & Request OTP
   const handleSendOtp = async (e?: React.FormEvent) => {
@@ -220,7 +272,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   return (
     <div className="min-h-screen bg-[#F4F7FC] text-slate-900 font-['Plus_Jakarta_Sans',sans-serif] flex flex-col justify-between">
       {/* 1. TOP NAVIGATION BAR */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-[#E5EAF1] sticky top-0 z-40 px-4 sm:px-8 py-3.5 flex items-center justify-between">
+      <header className="bg-white/90 backdrop-blur-md border-b border-[#E5EAF1] sticky top-0 z-40 px-4 sm:px-8 py-3.5 flex items-center justify-between shadow-2xs">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#146EF5] to-[#3B82F6] flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0">
             <ShieldCheck className="w-6 h-6 text-white stroke-[2.2]" />
@@ -228,38 +280,38 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
           <div>
             <div className="flex items-center gap-2">
               <span className="font-extrabold text-lg sm:text-xl text-slate-900 tracking-tight">
-                CampusCare
+                Campus-Ai
               </span>
               <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-blue-50 text-[#146EF5] border border-blue-200">
-                AI Powered
+                Official Portal
               </span>
             </div>
             <p className="text-[11px] text-slate-500 font-medium hidden sm:block">
-              University Grievance Redressal &amp; SLA Management
+              AI-Powered University Grievance Redressal &amp; SLA Management
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 sm:gap-4">
+        <div className="flex items-center gap-2 sm:gap-4">
           <button
             onClick={scrollToInfo}
             className="text-xs font-bold text-slate-600 hover:text-[#146EF5] transition-colors flex items-center gap-1.5 cursor-pointer px-3 py-1.5 rounded-lg hover:bg-slate-100"
           >
             <Info className="w-4 h-4 text-[#146EF5]" />
-            <span className="hidden sm:inline">Platform Info &amp; FAQs</span>
+            <span className="hidden sm:inline">Platform Information &amp; FAQs</span>
             <span className="sm:hidden">About</span>
           </button>
-          <a
-            href="#contact"
-            onClick={(e) => {
-              e.preventDefault();
-              const el = document.getElementById("contact-section");
-              el?.scrollIntoView({ behavior: "smooth" });
-            }}
-            className="text-xs font-semibold text-slate-500 hover:text-slate-800 transition hidden md:inline-block"
+          
+          <button
+            onClick={() => handleInstantDemoLogin()}
+            disabled={isDemoLoggingIn || isSendingOtp}
+            className="text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:opacity-60 shadow-2xs"
+            title="Instant access with pre-configured student demo account"
           >
-            Helpdesk Contact
-          </a>
+            <Zap className="w-3.5 h-3.5 text-amber-600 fill-amber-600" />
+            <span className="hidden sm:inline">Quick Demo Login</span>
+            <span className="sm:hidden">Demo</span>
+          </button>
         </div>
       </header>
 
@@ -280,12 +332,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-xl text-white tracking-tight">CampusCare</span>
+                    <span className="font-bold text-xl text-white tracking-tight">Campus-Ai</span>
                     <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
                       AI
                     </span>
                   </div>
-                  <span className="text-xs text-slate-400">Official Student Portal</span>
+                  <span className="text-xs text-slate-400">Student &amp; Staff Portal</span>
                 </div>
               </div>
 
@@ -513,22 +565,41 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                     </div>
                   </div>
 
-                  {/* Submit Action Button */}
-                  <div className="pt-2">
+                  {/* Action Buttons */}
+                  <div className="pt-2 space-y-2.5">
                     <button
                       type="submit"
-                      disabled={isSendingOtp}
+                      disabled={isSendingOtp || isDemoLoggingIn}
                       className="w-full py-3.5 bg-[#146EF5] hover:bg-blue-600 active:bg-blue-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-60"
                     >
                       {isSendingOtp ? (
                         <>
                           <RefreshCw className="w-4 h-4 animate-spin" />
-                          <span>Validating &amp; Sending OTP...</span>
+                          <span>Validating Credentials &amp; Sending OTP...</span>
                         </>
                       ) : (
                         <>
-                          <span>Validate &amp; Send OTP</span>
+                          <span>Validate &amp; Send OTP Verification</span>
                           <ArrowRight className="w-4 h-4" />
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleInstantDemoLogin(rollNumber || "23AIML001", email || "student@college.edu.in", phone || "9876543210")}
+                      disabled={isSendingOtp || isDemoLoggingIn}
+                      className="w-full py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-60 shadow-2xs"
+                    >
+                      {isDemoLoggingIn ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-700" />
+                          <span>Authenticating Demo Account...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-3.5 h-3.5 text-amber-600 fill-amber-600" />
+                          <span>Instant Demo Login (1-Click)</span>
                         </>
                       )}
                     </button>
@@ -558,7 +629,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                       <span className="flex items-center gap-1.5 font-medium">
                         <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                         <span>
-                          Demo Verification Code:{" "}
+                          Verification Code:{" "}
                           <strong className="font-mono text-amber-900 text-sm font-bold ml-1">
                             {demoCode}
                           </strong>
@@ -610,7 +681,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                     ) : (
                       <>
                         <CheckCircle2 className="w-4 h-4" />
-                        <span>Verify &amp; Enter Dashboard</span>
+                        <span>Verify &amp; Enter Campus-Ai Dashboard</span>
                       </>
                     )}
                   </button>
@@ -662,7 +733,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                       {verifiedStudent?.rollNumber}).
                     </p>
                     <p className="text-[11px] text-emerald-600 font-medium mt-0.5">
-                      Session verified. Redirecting to your CampusCare Portal...
+                      Session verified. Redirecting to your Campus-Ai Dashboard...
                     </p>
                   </div>
                   <div className="flex items-center justify-center gap-2 text-xs text-[#146EF5] font-semibold pt-2">
@@ -675,26 +746,26 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
             {/* Privacy & Anti-Spam Notice */}
             <div className="pt-6 border-t border-[#E5EAF1] text-center text-[11px] text-slate-400">
-              Complaints and user data are strictly protected under University Privacy Rules and routed automatically to departmental ombudsmen.
+              Campus complaints and student records are strictly secured under University Privacy Rules and routed automatically to departmental ombudsmen.
             </div>
           </div>
         </div>
       </main>
 
-      {/* 3. PUBLIC INFORMATION SECTION (Requested in Spec) */}
+      {/* 3. PUBLIC INFORMATION SECTION */}
       <section id="public-info-section" className="bg-white border-t border-[#E5EAF1] py-16 px-4 sm:px-8 lg:px-12">
         <div className="max-w-6xl mx-auto space-y-16">
           
           {/* SECTION A: What is Campus-Ai? */}
           <div className="text-center max-w-3xl mx-auto space-y-4">
-            <span className="px-3 py-1 rounded-full bg-blue-50 text-[#146EF5] font-bold text-xs uppercase tracking-wider border border-blue-200">
+            <span className="px-3.5 py-1 rounded-full bg-blue-50 text-[#146EF5] font-bold text-xs uppercase tracking-wider border border-blue-200">
               About The Platform
             </span>
             <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
-              What is CampusCare AI?
+              What is Campus-Ai?
             </h2>
             <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
-              CampusCare AI is the official, intelligent grievance redressal and campus management system engineered for higher education institutions. It connects students, faculty, and administrative departments through AI-driven triage, transparent SLA tracking, and real-time resolution workflows.
+              Campus-Ai is the official, intelligent grievance redressal and campus management platform engineered for universities and collegiate institutions. It bridges students, faculty, and administrative departments through AI-driven triage, transparent SLA tracking, and real-time resolution workflows.
             </p>
           </div>
 
@@ -702,7 +773,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
           <div className="space-y-8">
             <div className="text-center space-y-2">
               <h3 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-                How It Works
+                How Campus-Ai Works
               </h3>
               <p className="text-xs sm:text-sm text-slate-500">
                 From issue submission to final resolution, every grievance is tracked transparently.
@@ -717,7 +788,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 </div>
                 <h4 className="font-bold text-base text-slate-900">Submit Grievance</h4>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Students log in with their verified .edu.in ID and submit issues with location tags, category specifications, and photo evidence.
+                  Students log in with their verified .edu.in credentials and submit issues with location tags, category specifications, and optional image attachments.
                 </p>
               </div>
 
@@ -763,7 +834,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 Key Platform Features
               </h3>
               <p className="text-xs sm:text-sm text-slate-500">
-                Built specifically for student welfare and institutional accountability.
+                Built specifically for student welfare, quick resolution, and institutional accountability.
               </p>
             </div>
 
@@ -774,7 +845,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 </div>
                 <h4 className="font-bold text-sm text-slate-900">AI Priority &amp; Sentiment Triage</h4>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Detects emergency hazards (such as electrical or water safety issues) and flags them for immediate critical resolution.
+                  Automatically detects emergency hazards (such as electrical or water safety issues) and flags them for immediate critical resolution.
                 </p>
               </div>
 
@@ -838,7 +909,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 About Us &amp; Governance
               </h4>
               <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                CampusCare AI is deployed under the mandate of the University Grievance Redressal Committee (SGRC) to uphold transparency, rapid student support, and academic excellence. All administrative decisions and AI triage parameters adhere to institutional regulations.
+                Campus-Ai is deployed under the mandate of the University Grievance Redressal Committee (SGRC) to uphold transparency, rapid student support, and academic excellence. All administrative decisions and AI triage parameters adhere strictly to institutional regulations.
               </p>
             </div>
 
@@ -848,7 +919,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 Credits &amp; Development
               </h4>
               <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                Designed &amp; Developed for the University Student Council &amp; Campus Administration. Powered by Google Gemini AI and the CampusCare High-Performance Engine.
+                Designed &amp; Developed for the University Student Council &amp; Campus Administration. Powered by Google Gemini AI and the Campus-Ai High-Performance Engine.
               </p>
             </div>
           </div>
@@ -901,12 +972,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-[#146EF5]" />
-            <span className="font-bold text-white">CampusCare AI</span>
+            <span className="font-bold text-white">Campus-Ai</span>
             <span>— Official Student Grievance System</span>
           </div>
 
           <div className="text-[11px] text-slate-500">
-            &copy; {new Date().getFullYear()} CampusCare AI. All Rights Reserved. Protected under University Privacy &amp; Anti-Ragging Statutes.
+            &copy; {new Date().getFullYear()} Campus-Ai. All Rights Reserved. Protected under University Privacy &amp; Anti-Ragging Statutes.
           </div>
         </div>
       </footer>
