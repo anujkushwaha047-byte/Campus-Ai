@@ -1,4 +1,21 @@
 export type Category = 
+  | 'Fire & Safety'
+  | 'Electricity'
+  | 'Water Supply'
+  | 'Food & Mess'
+  | 'Wi-Fi & Internet'
+  | 'Plumbing & Bathroom'
+  | 'Cleanliness & Hygiene'
+  | 'Hostel / Room Maintenance'
+  | 'Security'
+  | 'Lift / Elevator'
+  | 'Classroom / Academic Infrastructure'
+  | 'Computer Lab'
+  | 'Parking & Transport'
+  | 'Sports & Recreation'
+  | 'Campus Environment'
+  | 'Staff / Service Issue'
+  | 'General / Other'
   | 'Hostel'
   | 'Faculty'
   | 'Library'
@@ -55,9 +72,13 @@ export interface Complaint {
   title: string;
   description: string;
   category: Category;
+  subcategory?: string;
   priority: Priority;
   aiReason: string;
-  aiConfidence?: number;
+  aiSummary?: string;
+  aiConfidence?: number | null;
+  riskFlags?: string[];
+  recommendedAction?: string;
   status: ComplaintStatus;
   department: string;
   assignedTo?: string;
@@ -114,12 +135,19 @@ export interface NotificationItem {
 }
 
 export interface AIAnalysisResult {
-  category: Category;
+  category: Category | string;
+  subcategory?: string;
   priority: Priority;
+  severity?: Priority;
   reason: string;
-  confidence?: number;
+  summary?: string;
+  department?: string;
   recommendedDepartment?: string;
   suggestedAction?: string;
+  recommendedAction?: string;
+  riskFlags?: string[];
+  urgencyScore?: number;
+  confidence?: number | null;
   estimatedResolutionHours?: number;
 }
 

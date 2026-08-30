@@ -34,7 +34,7 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
   onOpenTrackView,
 }) => {
   const [title, setTitle] = useState("");
-  const [category, setCategory] = useState<Category>("Hostel");
+  const [category, setCategory] = useState<Category>("Hostel / Room Maintenance");
   const [description, setDescription] = useState("");
   const [location, setLocation] = useState("");
   const [files, setFiles] = useState<{ id: string; name: string; size: string; type: string }[]>([]);
@@ -45,15 +45,23 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
   if (!isOpen) return null;
 
   const categories: Category[] = [
-    "Hostel",
-    "Faculty",
-    "Library",
-    "Examination",
-    "IT",
-    "Infrastructure",
-    "Transport",
-    "Fees",
-    "Other",
+    "Fire & Safety",
+    "Electricity",
+    "Water Supply",
+    "Food & Mess",
+    "Wi-Fi & Internet",
+    "Plumbing & Bathroom",
+    "Cleanliness & Hygiene",
+    "Hostel / Room Maintenance",
+    "Security",
+    "Lift / Elevator",
+    "Classroom / Academic Infrastructure",
+    "Computer Lab",
+    "Parking & Transport",
+    "Sports & Recreation",
+    "Campus Environment",
+    "Staff / Service Issue",
+    "General / Other",
   ];
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -112,10 +120,14 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
           title: title.trim(),
           description: description.trim(),
           category: aiData.category || category,
-          priority: aiData.priority || "Medium",
+          subcategory: aiData.subcategory || undefined,
+          priority: aiData.severity || aiData.priority || "Medium",
           aiReason: aiData.reason || "Analyzed by CampusCare AI Engine.",
-          aiConfidence: aiData.confidence || 96,
-          department: aiData.recommendedDepartment || `${category} Support Department`,
+          aiSummary: aiData.summary || undefined,
+          aiConfidence: aiData.confidence !== undefined ? aiData.confidence : null,
+          riskFlags: aiData.riskFlags || [],
+          recommendedAction: aiData.recommendedAction || aiData.suggestedAction || undefined,
+          department: aiData.department || aiData.recommendedDepartment || `${category} Support Department`,
           location: location.trim() || "Main Campus",
           attachments: files,
         }),
@@ -204,8 +216,12 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
               {/* AI Analysis Confirmation Card */}
               <AIAnalysisCard
                 category={submittedComplaint.category}
+                subcategory={submittedComplaint.subcategory}
                 priority={submittedComplaint.priority}
                 reason={submittedComplaint.aiReason}
+                summary={submittedComplaint.aiSummary}
+                riskFlags={submittedComplaint.riskFlags}
+                recommendedAction={submittedComplaint.recommendedAction}
                 confidence={submittedComplaint.aiConfidence}
                 recommendedDepartment={submittedComplaint.department}
               />

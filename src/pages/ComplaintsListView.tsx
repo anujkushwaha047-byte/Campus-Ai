@@ -40,15 +40,23 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>(initialFilter?.status || "all");
 
   const categories: Category[] = [
-    "Hostel",
-    "Faculty",
-    "Library",
-    "Examination",
-    "IT",
-    "Infrastructure",
-    "Transport",
-    "Fees",
-    "Other",
+    "Fire & Safety",
+    "Electricity",
+    "Water Supply",
+    "Food & Mess",
+    "Wi-Fi & Internet",
+    "Plumbing & Bathroom",
+    "Cleanliness & Hygiene",
+    "Hostel / Room Maintenance",
+    "Security",
+    "Lift / Elevator",
+    "Classroom / Academic Infrastructure",
+    "Computer Lab",
+    "Parking & Transport",
+    "Sports & Recreation",
+    "Campus Environment",
+    "Staff / Service Issue",
+    "General / Other",
   ];
 
   const priorities: Priority[] = ["Critical", "High", "Medium", "Low"];

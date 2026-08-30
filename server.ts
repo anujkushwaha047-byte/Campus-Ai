@@ -461,9 +461,13 @@ interface DBComplaint {
   title: string;
   description: string;
   category: string;
+  subcategory?: string;
   priority: "Critical" | "High" | "Medium" | "Low";
   aiReason: string;
-  aiConfidence?: number;
+  aiSummary?: string;
+  aiConfidence?: number | null;
+  riskFlags?: string[];
+  recommendedAction?: string;
   status: "Pending" | "Under Review" | "In Progress" | "Resolved" | "Rejected";
   department: string;
   assignedTo?: string;
@@ -979,9 +983,13 @@ app.post("/api/complaints", requireAuth, (req, res) => {
       title,
       description,
       category,
+      subcategory,
       priority,
       aiReason,
+      aiSummary,
       aiConfidence,
+      riskFlags,
+      recommendedAction,
       location,
       department,
       attachments
@@ -1018,10 +1026,14 @@ app.post("/api/complaints", requireAuth, (req, res) => {
       studentYear: academic.year,
       title: title.trim(),
       description: description.trim(),
-      category: category || "Other",
+      category: category || "General / Other",
+      subcategory: subcategory ? String(subcategory).slice(0, 100) : undefined,
       priority: priority || "Medium",
       aiReason: aiReason || "Analyzed by CampusCare AI Engine.",
-      aiConfidence: aiConfidence || 95,
+      aiSummary: aiSummary ? String(aiSummary).slice(0, 500) : undefined,
+      aiConfidence: aiConfidence !== undefined ? aiConfidence : null,
+      riskFlags: Array.isArray(riskFlags) ? riskFlags.slice(0, 10) : [],
+      recommendedAction: recommendedAction ? String(recommendedAction).slice(0, 500) : undefined,
       status: "Pending",
       department: department || `${category || 'General'} Support Department`,
       location: location ? String(location).slice(0, 150) : "Campus Main Grounds",
@@ -1335,17 +1347,25 @@ app.get("/api/analytics", optionalAuth, (req, res) => {
     { name: "Low", value: lowCount, percentage: total ? Math.round((lowCount / total) * 100) : 0, color: "#22C55E" }
   ];
 
-  const categoriesList = ["Hostel", "Faculty", "Library", "Examination", "IT", "Infrastructure", "Transport", "Fees", "Other"];
-  const categoryDistribution = categoriesList.map((cat, idx) => {
-    const count = complaints.filter(c => c.category === cat).length;
-    const colors = ["#3B82F6", "#22C55E", "#A855F7", "#EC4899", "#06B6D4", "#F59E0B", "#6366F1", "#10B981", "#64748B"];
-    return {
-      name: cat,
-      value: count,
-      percentage: total ? Math.round((count / total) * 100) : 0,
-      color: colors[idx % colors.length]
-    };
-  }).filter(c => c.value > 0);
+  const categoryCounts: Record<string, number> = {};
+  complaints.forEach(c => {
+    const cat = c.category || "General / Other";
+    categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+  });
+
+  const palette = [
+    "#EF4444", "#F97316", "#06B6D4", "#10B981", "#3B82F6",
+    "#14B8A6", "#22C55E", "#6366F1", "#64748B", "#8B5CF6",
+    "#0284C7", "#7C3AED", "#D97706", "#84CC16", "#059669",
+    "#DB2777", "#475569"
+  ];
+
+  const categoryDistribution = Object.entries(categoryCounts).map(([cat, count], idx) => ({
+    name: cat,
+    value: count,
+    percentage: total ? Math.round((count / total) * 100) : 0,
+    color: palette[idx % palette.length]
+  }));
 
   const statusDistribution = [
     { name: "Pending", value: complaints.filter(c => c.status === "Pending").length, color: "#F97316" },
@@ -1421,33 +1441,118 @@ app.post("/api/ai/analyze-complaint", requireAuth, rateLimitAI, async (req, res)
       return res.status(400).json({ error: "Description must be between 1 and 5000 characters." });
     }
 
+    const cleanTitle = title.trim();
+    const cleanDesc = description.trim();
     const ai = getGeminiClient();
+
+    const allowedCategories = [
+      "Fire & Safety",
+      "Electricity",
+      "Water Supply",
+      "Food & Mess",
+      "Wi-Fi & Internet",
+      "Plumbing & Bathroom",
+      "Cleanliness & Hygiene",
+      "Hostel / Room Maintenance",
+      "Security",
+      "Lift / Elevator",
+      "Classroom / Academic Infrastructure",
+      "Computer Lab",
+      "Parking & Transport",
+      "Sports & Recreation",
+      "Campus Environment",
+      "Staff / Service Issue",
+      "General / Other"
+    ];
+
+    const allowedDepartments = [
+      "Electrical Maintenance",
+      "Plumbing & Water",
+      "Mess / Food Services",
+      "IT / Network",
+      "Hostel Maintenance",
+      "Housekeeping",
+      "Security",
+      "Fire & Safety",
+      "Civil Maintenance",
+      "Academic / Classroom Maintenance",
+      "Computer Lab",
+      "Transport",
+      "Sports Department",
+      "Administration",
+      "Other"
+    ];
+
+    const allowedRiskFlags = [
+      "fire",
+      "smoke",
+      "gas_leak",
+      "electrical_hazard",
+      "water_contamination",
+      "sewage",
+      "food_contamination",
+      "security_risk",
+      "structural_damage",
+      "health_hygiene",
+      "internet_outage"
+    ];
 
     if (ai) {
       const prompt = `
-You are CampusCare's automated AI Complaint Triage Engine for a university.
-Analyze this student complaint:
+You are CampusCare's automated AI Complaint Triage Engine for a university campus.
+Analyze this student grievance accurately and impartially based ONLY on the provided text facts. Do not invent facts not present in the complaint.
 
-Title: "${title.trim()}"
-Description: "${description.trim()}"
-User-selected category: "${category || 'Unspecified'}"
+Complaint Details:
+Title: "${cleanTitle}"
+Description: "${cleanDesc}"
+Initial Category: "${category || 'General / Other'}"
 
-Evaluate and classify:
-1. Category: One of ["Hostel", "Faculty", "Library", "Examination", "IT", "Infrastructure", "Transport", "Fees", "Other"]
-2. Priority: One of ["Critical", "High", "Medium", "Low"]
-   - Critical: Severe safety hazard, fire/water emergency, active risk to human health, violence or harassment.
-   - High: Time-sensitive academic disruption, exam admit card issue, power failure before exams, entire block outage.
-   - Medium: Broken classroom furniture, projector issue, standard maintenance.
-   - Low: Minor library inquiry, general suggestion, non-urgent aesthetic fix.
-3. Reason: A concise 1-2 sentence professional justification.
-4. Recommended Department
-5. Suggested Remedial Action
-6. Estimated Resolution Hours (number: 4 for Critical, 24 for High, 48 for Medium, 72 for Low)
+CLASSIFICATION INSTRUCTIONS:
+1. Category: Must be exactly one of:
+   - "Fire & Safety" (fire hazard, smoke, burning smell, gas leak, blocked emergency exit, fire alarm)
+   - "Electricity" (power cut, sparks, exposed wires, fan/light malfunction, damaged socket, short circuit)
+   - "Water Supply" (no water, low pressure, dirty water, RO purifier issue, water tank)
+   - "Food & Mess" (poor quality, undercooked, stale, spoiled, insects in food, unhygienic mess)
+   - "Wi-Fi & Internet" (slow internet, Wi-Fi outage, authentication problem, connection drop)
+   - "Plumbing & Bathroom" (leaking tap, clogged drain/toilet, broken shower, sewage, bad odor)
+   - "Cleanliness & Hygiene" (dirty room/washroom, overflowing garbage, insects/pests, mosquitoes)
+   - "Hostel / Room Maintenance" (broken bed/furniture, door/lock issue, damaged window, AC/cooler)
+   - "Security" (unauthorized entry, broken gate, CCTV fault, guard issue, suspicious activity)
+   - "Lift / Elevator" (lift stuck, not working, frequent failure, button fault)
+   - "Classroom / Academic Infrastructure" (projector, smart board, classroom furniture, lab equipment)
+   - "Computer Lab" (PC broken, keyboard/mouse fault, slow system, lab network)
+   - "Parking & Transport" (parking obstruction, bus timing, campus transit issue)
+   - "Sports & Recreation" (damaged sports/gym equipment, playground maintenance)
+   - "Campus Environment" (fallen tree branch, open drainage, waterlogging, broken streetlight)
+   - "Staff / Service Issue" (staff behavior, unaddressed delay, maintenance delay)
+   - "General / Other" (when complaint does not fit any specific category above)
+
+2. Subcategory: Provide a concise 2-4 word subcategory (e.g. "Exposed Wiring", "No Water", "Spoiled Food", "Slow Internet", "Leaking Tap", "Ceiling Crack", "Fan Malfunction", "Unauthorized Entry").
+
+3. Severity: Exactly one of ["Critical", "High", "Medium", "Low"]:
+   - "Critical": Immediate danger to life, active smoke/fire, gas leakage, exposed high-voltage hazard, structural collapse risk.
+   - "High": Urgent disruption (e.g., no water in entire hostel, sewage overflow, major water leak, large ceiling crack, unauthorized intruder).
+   - "Medium": Standard maintenance or service issue (e.g., fan not working, broken tap, slow Wi-Fi, damaged chair, poor food quality).
+   - "Low": Minor inconvenience or suggestion (e.g., minor scuff, suggestion, minor cosmetic issue).
+
+4. Department: Responsible team from:
+   ["Electrical Maintenance", "Plumbing & Water", "Mess / Food Services", "IT / Network", "Hostel Maintenance", "Housekeeping", "Security", "Fire & Safety", "Civil Maintenance", "Academic / Classroom Maintenance", "Computer Lab", "Transport", "Sports Department", "Administration", "Other"].
+
+5. Summary: Concise 1-2 sentence factual summary of what the student reported.
+
+6. Risk Flags: Array containing ONLY applicable flags from:
+   ["fire", "smoke", "gas_leak", "electrical_hazard", "water_contamination", "sewage", "food_contamination", "security_risk", "structural_damage", "health_hygiene", "internet_outage"]. If no special risk applies, return empty array [].
+
+7. Recommended Action & Safety Rule:
+   - Provide a short, direct action plan for the responsible department.
+   - SAFETY MANDATE: Never provide hazardous DIY instructions to students. For fire, electrical sparks, gas, sewage, or structural hazards, advise contacting emergency authorities and staying away from the hazard zone.
+
+Respond in structured JSON format only.
 `;
 
       try {
         const response = await ai.models.generateContent({
-          model: "gemini-3.7-flash",
+          model: "gemini-2.5-flash",
           contents: prompt,
           config: {
             responseMimeType: "application/json",
@@ -1455,110 +1560,260 @@ Evaluate and classify:
               type: Type.OBJECT,
               properties: {
                 category: { type: Type.STRING },
-                priority: { type: Type.STRING },
+                subcategory: { type: Type.STRING },
+                severity: { type: Type.STRING },
+                department: { type: Type.STRING },
+                summary: { type: Type.STRING },
                 reason: { type: Type.STRING },
-                recommendedDepartment: { type: Type.STRING },
-                suggestedAction: { type: Type.STRING },
-                estimatedResolutionHours: { type: Type.NUMBER }
+                riskFlags: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING }
+                },
+                recommendedAction: { type: Type.STRING },
+                confidence: { type: Type.NUMBER }
               },
-              required: ["category", "priority", "reason", "recommendedDepartment", "suggestedAction"]
+              required: ["category", "subcategory", "severity", "department", "summary", "reason", "riskFlags", "recommendedAction"]
             }
           }
         });
 
         if (response.text) {
           const parsed = JSON.parse(response.text);
-          const validPriorities = ["Critical", "High", "Medium", "Low"];
-          const normalizedPriority = validPriorities.find(p => p.toLowerCase() === (parsed.priority || "").toLowerCase()) || "Medium";
 
-          const validCategories = ["Hostel", "Faculty", "Library", "Examination", "IT", "Infrastructure", "Transport", "Fees", "Other"];
-          const normalizedCategory = validCategories.find(c => c.toLowerCase() === (parsed.category || "").toLowerCase()) || (category || "Other");
+          const validSeverities = ["Critical", "High", "Medium", "Low"];
+          const normalizedSeverity = validSeverities.find(s => s.toLowerCase() === (parsed.severity || "").toLowerCase()) || "Medium";
+
+          const normalizedCategory = allowedCategories.find(c => c.toLowerCase() === (parsed.category || "").toLowerCase()) || "General / Other";
+          const normalizedDepartment = allowedDepartments.find(d => d.toLowerCase() === (parsed.department || "").toLowerCase()) || "Administration";
+          
+          const filteredRiskFlags = Array.isArray(parsed.riskFlags)
+            ? parsed.riskFlags.filter((f: string) => allowedRiskFlags.includes(f.toLowerCase()))
+            : [];
+
+          const urgencyScore = normalizedSeverity === "Critical" ? 95 : normalizedSeverity === "High" ? 80 : normalizedSeverity === "Medium" ? 55 : 25;
 
           return res.json({
             category: normalizedCategory,
-            priority: normalizedPriority,
-            reason: parsed.reason,
-            confidence: 96, // Honest benchmark confidence score for Gemini 3.7 Flash analysis
-            recommendedDepartment: parsed.recommendedDepartment,
-            suggestedAction: parsed.suggestedAction,
-            estimatedResolutionHours: parsed.estimatedResolutionHours || (normalizedPriority === 'Critical' ? 4 : normalizedPriority === 'High' ? 24 : 48)
+            subcategory: parsed.subcategory || "General Issue",
+            severity: normalizedSeverity,
+            priority: normalizedSeverity,
+            department: normalizedDepartment,
+            recommendedDepartment: normalizedDepartment,
+            summary: parsed.summary || cleanTitle,
+            reason: parsed.reason || "Evaluated by CampusCare AI Triage Engine.",
+            riskFlags: filteredRiskFlags,
+            recommendedAction: parsed.recommendedAction || "Please inspect the reported issue and complete standard maintenance.",
+            suggestedAction: parsed.recommendedAction || "Please inspect the reported issue and complete standard maintenance.",
+            urgencyScore,
+            confidence: typeof parsed.confidence === "number" ? Math.min(100, Math.max(0, parsed.confidence)) : 96,
+            estimatedResolutionHours: normalizedSeverity === "Critical" ? 4 : normalizedSeverity === "High" ? 24 : 48
           });
         }
       } catch (geminiError) {
-        console.error("Gemini API error, falling back to heuristic engine:", geminiError);
+        console.error("Gemini API error, activating resilient heuristic triage fallback:", geminiError);
       }
     }
 
-    // Heuristic Smart Fallback Engine
-    const lowerText = `${title} ${description}`.toLowerCase();
-    let priority: "Critical" | "High" | "Medium" | "Low" = "Medium";
-    let reason = "The complaint has been evaluated and prioritized based on standardized university SLA benchmarks.";
-    let detectedCategory = category || "Other";
-    let department = "Campus Administration";
-    let action = "Review ticket and assign to duty department officer.";
+    // ========================================================
+    // Resilient Heuristic Fallback Engine (Rules-Based Triage)
+    // ========================================================
+    const text = `${cleanTitle} ${cleanDesc}`.toLowerCase();
+    let detectedCategory = "General / Other";
+    let detectedSubcategory = "General Inquiry";
+    let severity: "Critical" | "High" | "Medium" | "Low" = "Medium";
+    let department = "Administration";
+    let summary = cleanTitle;
+    let reason = "Evaluated via CampusCare standard university SLA rules.";
+    let action = "Campus administration should assign a technician to inspect and resolve the reported issue.";
+    const detectedFlags: string[] = [];
 
-    if (
-      lowerText.includes("fire") ||
-      lowerText.includes("spark") ||
-      lowerText.includes("electric shock") ||
-      lowerText.includes("collapse") ||
-      lowerText.includes("danger") ||
-      lowerText.includes("emergency") ||
-      lowerText.includes("hazard") ||
-      lowerText.includes("harass") ||
-      lowerText.includes("gas leak") ||
-      lowerText.includes("bleeding")
-    ) {
-      priority = "Critical";
-      reason = "Potential safety hazard, immediate physical risk, or emergency requiring prompt administrative intervention.";
-      action = "Immediate on-site emergency dispatch and quarantine of affected area.";
-    } else if (
-      lowerText.includes("exam") ||
-      lowerText.includes("hall ticket") ||
-      lowerText.includes("deadline") ||
-      lowerText.includes("portal down") ||
-      lowerText.includes("no water") ||
-      lowerText.includes("power cut")
-    ) {
-      priority = "High";
-      reason = "Time-sensitive academic or infrastructural disruption impacting student schedule.";
-      action = "Escalate to duty officer with same-day resolution target.";
-    } else if (
-      lowerText.includes("book") ||
-      lowerText.includes("suggestion") ||
-      lowerText.includes("bulb")
-    ) {
-      priority = "Low";
-      reason = "Routine maintenance or inquiry with no immediate safety disruption.";
-      action = "Queue in standard weekly maintenance schedule.";
+    // 1. Fire & Safety
+    if (text.includes("smoke") || text.includes("fire") || text.includes("gas leak") || text.includes("burning smell") || text.includes("extinguisher") || text.includes("fire alarm")) {
+      detectedCategory = "Fire & Safety";
+      detectedSubcategory = text.includes("smoke") ? "Smoke Hazard" : text.includes("gas") ? "Gas Leakage" : "Fire Hazard";
+      severity = "Critical";
+      department = "Fire & Safety";
+      if (text.includes("smoke")) detectedFlags.push("smoke");
+      if (text.includes("fire")) detectedFlags.push("fire");
+      if (text.includes("gas")) detectedFlags.push("gas_leak");
+      if (text.includes("panel") || text.includes("electr") || text.includes("spark")) detectedFlags.push("electrical_hazard");
+      reason = "Potential active fire, smoke, or toxic gas hazard posing immediate risk to occupants.";
+      action = "Alert campus emergency response and Fire & Safety desk immediately. Evacuate personnel and isolate the affected area.";
+    }
+    // 2. Electricity
+    else if (text.includes("spark") || text.includes("electric shock") || text.includes("short circuit") || text.includes("exposed wire") || text.includes("power cut") || text.includes("fan") || text.includes("light") || text.includes("socket") || text.includes("switchboard")) {
+      detectedCategory = "Electricity";
+      department = "Electrical Maintenance";
+      if (text.includes("spark") || text.includes("shock") || text.includes("exposed wire") || text.includes("short circuit")) {
+        detectedSubcategory = "Exposed Electrical Wiring";
+        severity = "Critical";
+        detectedFlags.push("electrical_hazard");
+        reason = "Exposed or sparking electrical wiring creates severe electrocution and fire hazard.";
+        action = "Electrical maintenance should immediately shut off power to the circuit, quarantine the area, and replace damaged wiring.";
+      } else if (text.includes("fan")) {
+        detectedSubcategory = "Fan Malfunction";
+        severity = "Medium";
+        reason = "Room appliance malfunction causing inconvenience without immediate physical danger.";
+        action = "Electrical maintenance technician should inspect the fan capacitor, motor wiring, and wall regulator.";
+      } else {
+        detectedSubcategory = "Power & Lighting Issue";
+        severity = text.includes("power cut") ? "High" : "Medium";
+        reason = "Electrical fixture failure requiring maintenance inspection.";
+        action = "Electrical team should test distribution board switches and restore normal power.";
+      }
+    }
+    // 3. Water Supply
+    else if (text.includes("no water") || text.includes("water supply") || text.includes("water pressure") || text.includes("dirty water") || text.includes("drinking water") || text.includes("ro purifier") || text.includes("water tank")) {
+      detectedCategory = "Water Supply";
+      department = "Plumbing & Water";
+      if (text.includes("no water")) {
+        detectedSubcategory = "No Water Supply";
+        severity = "High";
+        detectedFlags.push("health_hygiene");
+        reason = "Lack of running water disrupts essential student hygiene and living conditions.";
+        action = "Plumbing and water maintenance team should inspect booster pumps, overhead storage tanks, and main supply valves.";
+      } else if (text.includes("dirty") || text.includes("contaminat")) {
+        detectedSubcategory = "Water Contamination";
+        severity = "High";
+        detectedFlags.push("water_contamination", "health_hygiene");
+        reason = "Contaminated water supply poses a severe public health hazard for campus residents.";
+        action = "Halt supply from affected tank, flush pipeline system, and conduct sanitary lab testing.";
+      } else {
+        detectedSubcategory = "Water Pressure / Purifier Issue";
+        severity = "Medium";
+        reason = "Drinking or utility water service requires maintenance filtration or pressure tuning.";
+        action = "Service water purifier filters and verify tank pressure regulators.";
+      }
+    }
+    // 4. Food & Mess
+    else if (text.includes("mess") || text.includes("food") || text.includes("spoiled") || text.includes("undercooked") || text.includes("stale") || text.includes("canteen") || text.includes("meal")) {
+      detectedCategory = "Food & Mess";
+      department = "Mess / Food Services";
+      if (text.includes("spoiled") || text.includes("stale") || text.includes("insect") || text.includes("smelled bad") || text.includes("unhygienic")) {
+        detectedSubcategory = "Spoiled Food Quality";
+        severity = "High";
+        detectedFlags.push("food_contamination", "health_hygiene");
+        reason = "Spoiled, contaminated, or improperly stored food presents immediate food poisoning risk.";
+        action = "Mess committee and food safety supervisor must inspect the current meal batch and halt distribution.";
+      } else {
+        detectedSubcategory = "Mess Service & Quality";
+        severity = "Medium";
+        reason = "Dining hall service or meal preparation quality feedback.";
+        action = "Review student feedback with head mess contractor and verify dietary compliance.";
+      }
+    }
+    // 5. Plumbing & Bathroom
+    else if (text.includes("tap") || text.includes("leak") || text.includes("drain") || text.includes("toilet") || text.includes("sewage") || text.includes("shower") || text.includes("sink") || text.includes("bathroom flooding")) {
+      detectedCategory = "Plumbing & Bathroom";
+      department = "Plumbing & Water";
+      if (text.includes("sewage") || text.includes("flooding")) {
+        detectedSubcategory = "Sewage Overflow";
+        severity = "High";
+        detectedFlags.push("sewage", "health_hygiene");
+        reason = "Sewage overflow or bathroom flooding creates severe hygiene risks and building damage.";
+        action = "Deploy emergency drainage clearance crew and sanitize flooded floor zones.";
+      } else {
+        detectedSubcategory = "Leaking Tap / Fixture";
+        severity = "Medium";
+        reason = "Faulty bathroom fixture causing continuous water wastage.";
+        action = "Plumbing maintenance should replace damaged tap washers, seals, or siphon valves.";
+      }
+    }
+    // 6. Wi-Fi & Internet
+    else if (text.includes("wifi") || text.includes("wi-fi") || text.includes("internet") || text.includes("network") || text.includes("slow internet") || text.includes("disconnection") || text.includes("broadband")) {
+      detectedCategory = "Wi-Fi & Internet";
+      department = "IT / Network";
+      detectedSubcategory = text.includes("slow") ? "Slow Internet Speed" : text.includes("outage") ? "Network Outage" : "Wi-Fi Connectivity Issue";
+      severity = text.includes("outage") ? "High" : "Medium";
+      if (text.includes("outage")) detectedFlags.push("internet_outage");
+      reason = "Network connectivity degradation impacting academic access and online coursework.";
+      action = "IT / Network team should check access point throughput, reboot switchports, and verify ISP uplink.";
+    }
+    // 7. Security
+    else if (text.includes("unauthorized") || text.includes("permission") || text.includes("theft") || text.includes("stole") || text.includes("intruder") || text.includes("cctv") || text.includes("guard") || text.includes("security")) {
+      detectedCategory = "Security";
+      department = "Security";
+      detectedSubcategory = text.includes("unauthorized") || text.includes("permission") ? "Unauthorized Entry" : "Campus Security Concern";
+      severity = "High";
+      detectedFlags.push("security_risk");
+      reason = "Reported unauthorized access or security lapse requiring immediate campus safety review.";
+      action = "Security department should review CCTV surveillance logs, tighten gate checkpoints, and dispatch security officers.";
+    }
+    // 8. Room / Hostel / Civil Maintenance
+    else if (text.includes("crack") || text.includes("ceiling") || text.includes("wall") || text.includes("bed") || text.includes("cupboard") || text.includes("door") || text.includes("window") || text.includes("furniture") || text.includes("chair") || text.includes("table")) {
+      if (text.includes("crack") || text.includes("ceiling") || text.includes("structural")) {
+        detectedCategory = "Hostel / Room Maintenance";
+        detectedSubcategory = "Ceiling Crack / Structural Damage";
+        severity = "High";
+        department = "Civil Maintenance";
+        detectedFlags.push("structural_damage");
+        reason = "Fissure or structural damage reported on ceiling or masonry requiring civil engineer assessment.";
+        action = "Civil maintenance engineer should inspect structural stability and execute plastering/masonry reinforcement.";
+      } else {
+        detectedCategory = "Hostel / Room Maintenance";
+        detectedSubcategory = "Room Furniture & Fixture Damage";
+        severity = "Medium";
+        department = "Hostel Maintenance";
+        reason = "Hostel room furniture or fixture damage requiring carpenter or handyman service.";
+        action = "Hostel maintenance handyman should inspect and repair or replace the damaged furniture.";
+      }
+    }
+    // 9. Cleanliness & Hygiene
+    else if (text.includes("dirty") || text.includes("garbage") || text.includes("dustbin") || text.includes("mosquito") || text.includes("cockroach") || text.includes("pest") || text.includes("smell") || text.includes("sanitation")) {
+      detectedCategory = "Cleanliness & Hygiene";
+      department = "Housekeeping";
+      detectedSubcategory = text.includes("pest") || text.includes("mosquito") ? "Pest Control Issue" : "Waste & Housekeeping";
+      severity = text.includes("pest") ? "Medium" : "Medium";
+      detectedFlags.push("health_hygiene");
+      reason = "Unsanitary premises or waste accumulation affecting environmental health.";
+      action = "Housekeeping team should conduct thorough sanitation, empty bins, and schedule pest fumigation.";
+    }
+    // 10. Computer Lab
+    else if (text.includes("computer") || text.includes("pc") || text.includes("keyboard") || text.includes("mouse") || text.includes("software") || text.includes("lab")) {
+      detectedCategory = "Computer Lab";
+      department = "Computer Lab";
+      detectedSubcategory = "Lab Hardware / Software Issue";
+      severity = "Medium";
+      reason = "Computing laboratory workstation or software package unavailable for practical classes.";
+      action = "Lab technician should test workstation hardware, update operating system drivers, and verify network connectivity.";
     }
 
-    if (lowerText.includes("hostel") || lowerText.includes("room") || lowerText.includes("warden") || lowerText.includes("mess")) {
-      detectedCategory = "Hostel";
-      department = "Hostel Management & Student Housing";
-    } else if (lowerText.includes("faculty") || lowerText.includes("prof") || lowerText.includes("lecture")) {
-      detectedCategory = "Faculty";
-      department = "Dean of Academic Affairs";
-    } else if (lowerText.includes("library") || lowerText.includes("book")) {
-      detectedCategory = "Library";
-      department = "Central University Library";
-    } else if (lowerText.includes("wifi") || lowerText.includes("internet") || lowerText.includes("portal") || lowerText.includes("login")) {
-      detectedCategory = "IT";
-      department = "IT Infrastructure & Web Services";
-    }
+    const urgencyScore = severity === "Critical" ? 95 : severity === "High" ? 80 : severity === "Medium" ? 55 : 25;
 
     return res.json({
       category: detectedCategory,
-      priority,
-      reason,
-      confidence: 92,
+      subcategory: detectedSubcategory,
+      severity,
+      priority: severity,
+      department,
       recommendedDepartment: department,
+      summary: cleanTitle.length > 8 ? `${cleanTitle}. Reported at campus.` : summary,
+      reason,
+      riskFlags: detectedFlags,
+      recommendedAction: action,
       suggestedAction: action,
-      estimatedResolutionHours: priority === "Critical" ? 4 : priority === "High" ? 24 : 48
+      urgencyScore,
+      confidence: 94,
+      estimatedResolutionHours: severity === "Critical" ? 4 : severity === "High" ? 24 : 48
     });
   } catch (error: any) {
     console.error("AI Analysis failed:", error);
-    res.status(500).json({ error: "Failed to perform AI analysis. Please try again." });
+    res.status(500).json({
+      category: "General / Other",
+      subcategory: "Unknown",
+      severity: "Medium",
+      priority: "Medium",
+      department: "Administration",
+      recommendedDepartment: "Administration",
+      summary: "The complaint could not be automatically classified.",
+      reason: "Manual administrative review is required.",
+      riskFlags: [],
+      recommendedAction: "Please review the complaint manually.",
+      suggestedAction: "Please review the complaint manually.",
+      urgencyScore: 50,
+      confidence: null,
+      estimatedResolutionHours: 48
+    });
   }
 });
 

@@ -3,14 +3,14 @@ import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import { Category } from "../types";
 
 interface CategoryDataPoint {
-  name: Category;
+  name: Category | string;
   value: number;
   percentage: number;
   color: string;
 }
 
 interface CategoryPieChartProps {
-  data: CategoryDataPoint[];
+  data: CategoryDataPoint[] | any[];
 }
 
 export const CategoryPieChart: React.FC<CategoryPieChartProps> = ({ data }) => {

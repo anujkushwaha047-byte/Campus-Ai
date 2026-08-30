@@ -275,8 +275,12 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
               {/* AI Analysis Card */}
               <AIAnalysisCard
                 category={complaint.category}
+                subcategory={complaint.subcategory}
                 priority={complaint.priority}
                 reason={complaint.aiReason}
+                summary={complaint.aiSummary}
+                riskFlags={complaint.riskFlags}
+                recommendedAction={complaint.recommendedAction}
                 confidence={complaint.aiConfidence}
                 recommendedDepartment={complaint.department}
               />

@@ -21,76 +21,157 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
     color: string;
   }[] = [
     {
-      category: "Hostel",
-      lead: "Dr. Ramesh V. (Chief Warden)",
-      office: "Hostel Administrative Wing, Ground Floor",
-      contact: "warden.hostel@campus.edu",
-      description: "Room maintenance, plumbing, electricals, sanitation, mess quality, and room allocation.",
-      sla: "24-48 Hours",
-      color: "from-blue-500 to-indigo-600",
+      category: "Fire & Safety",
+      lead: "Er. V. K. Malhotra (Chief Fire Safety Officer)",
+      office: "Campus Emergency Control Center, Room 101",
+      contact: "firesafety@campus.edu",
+      description: "Fire hazards, smoke alarms, emergency exits, gas leaks, and fire suppression systems.",
+      sla: "Immediate (1-2 Hours)",
+      color: "from-rose-600 to-red-700",
     },
     {
-      category: "Faculty",
-      lead: "Prof. Ananya Sen (Dean Academics)",
-      office: "Academic Council Secretariat, Main Building",
-      contact: "dean.academics@campus.edu",
-      description: "Course delivery, attendance discrepancies, lecture timetable clashes, and academic grievances.",
-      sla: "3-5 Business Days",
-      color: "from-emerald-500 to-teal-600",
-    },
-    {
-      category: "Library",
-      lead: "Mrs. Sunita Rao (Head Librarian)",
-      office: "Central University Library, 2nd Floor",
-      contact: "library.desk@campus.edu",
-      description: "Book availability, digital journal database access, reading hall noise, and overdue fine appeals.",
-      sla: "24 Hours",
-      color: "from-purple-500 to-indigo-600",
-    },
-    {
-      category: "Examination",
-      lead: "Dr. Arvind Swamy (Controller of Exams)",
-      office: "Examination Cell, Admin Block Room 104",
-      contact: "exams@campus.edu",
-      description: "Hall tickets, re-evaluation requests, marksheet corrections, and exam hall logistics.",
-      sla: "48-72 Hours",
-      color: "from-pink-500 to-rose-600",
-    },
-    {
-      category: "IT",
-      lead: "Er. Sandeep Joshi (Network Director)",
-      office: "Campus IT Data Center, Tech Park",
-      contact: "it.helpdesk@campus.edu",
-      description: "Campus Wi-Fi connectivity, student ERP login issues, laboratory hardware, and projector repairs.",
-      sla: "12-24 Hours",
-      color: "from-cyan-500 to-blue-600",
-    },
-    {
-      category: "Infrastructure",
-      lead: "Er. K. N. Sastry (Chief Estate Officer)",
-      office: "Civil & Estate Works Section",
-      contact: "estate@campus.edu",
-      description: "Classroom furniture, lift maintenance, drinking water coolers, and campus lighting.",
-      sla: "48 Hours",
+      category: "Electricity",
+      lead: "Er. Sandeep Verma (Chief Electrical Engineer)",
+      office: "Electrical Substation & Maintenance Office",
+      contact: "electrical@campus.edu",
+      description: "Power cuts, short circuits, exposed wires, room fans, switchboards, and backup generators.",
+      sla: "4-12 Hours",
       color: "from-amber-500 to-orange-600",
     },
     {
-      category: "Transport",
+      category: "Water Supply",
+      lead: "Er. K. N. Sastry (Water Supply Superintendent)",
+      office: "Hydro & Water Works Section, Pump House 2",
+      contact: "waterworks@campus.edu",
+      description: "Drinking water quality, RO purifiers, supply shortages, pressure issues, and tank maintenance.",
+      sla: "4-8 Hours",
+      color: "from-cyan-500 to-blue-600",
+    },
+    {
+      category: "Food & Mess",
+      lead: "Dr. Arvind Swamy (Hostel Mess Warden)",
+      office: "Central Dining & Mess Administration Hall",
+      contact: "mess.committee@campus.edu",
+      description: "Meal hygiene, food contamination, catering delays, menu adherence, and drinking water in dining halls.",
+      sla: "4-12 Hours",
+      color: "from-emerald-500 to-teal-600",
+    },
+    {
+      category: "Wi-Fi & Internet",
+      lead: "Er. Sandeep Joshi (Network & IT Director)",
+      office: "Campus IT Data Center, Tech Park",
+      contact: "it.helpdesk@campus.edu",
+      description: "Hostel Wi-Fi coverage, campus broadband outages, student portal logins, and bandwidth speeds.",
+      sla: "12-24 Hours",
+      color: "from-blue-600 to-indigo-700",
+    },
+    {
+      category: "Plumbing & Bathroom",
+      lead: "Mr. Baldev Singh (Plumbing Supervisor)",
+      office: "Sanitary & Plumbing Cell, Ground Floor",
+      contact: "plumbing@campus.edu",
+      description: "Leaking taps, blocked drains, flush repairs, shower faults, and sewage issues.",
+      sla: "12-24 Hours",
+      color: "from-teal-500 to-cyan-700",
+    },
+    {
+      category: "Cleanliness & Hygiene",
+      lead: "Mrs. Sunita Rao (Housekeeping Head)",
+      office: "Campus Sanitation & Housekeeping Office",
+      contact: "housekeeping@campus.edu",
+      description: "Hostel room sanitation, garbage clearing, pest control, washroom disinfection, and common areas.",
+      sla: "12 Hours",
+      color: "from-emerald-600 to-green-700",
+    },
+    {
+      category: "Hostel / Room Maintenance",
+      lead: "Dr. Ramesh V. (Chief Hostel Warden)",
+      office: "Hostel Administrative Wing, Ground Floor",
+      contact: "warden.hostel@campus.edu",
+      description: "Broken beds, doors, locks, study tables, wardrobes, ceiling fans, and room infrastructure.",
+      sla: "24-48 Hours",
+      color: "from-indigo-500 to-blue-700",
+    },
+    {
+      category: "Security",
+      lead: "Capt. M. S. Rana (Chief Security Officer)",
+      office: "Main Gate Security HQ & CCTV Control Room",
+      contact: "security.hq@campus.edu",
+      description: "Unauthorized campus access, perimeter security, lost and found, CCTV footage, and safety patrols.",
+      sla: "2-4 Hours",
+      color: "from-slate-700 to-slate-900",
+    },
+    {
+      category: "Lift / Elevator",
+      lead: "Er. R. K. Mukherjee (Lift Maintenance Engineer)",
+      office: "Estate Vertical Transport Division",
+      contact: "elevators@campus.edu",
+      description: "Elevator breakdown, emergency alarm bells, door malfunctions, and maintenance inspections.",
+      sla: "2-6 Hours",
+      color: "from-purple-600 to-indigo-800",
+    },
+    {
+      category: "Classroom / Academic Infrastructure",
+      lead: "Prof. Ananya Sen (Dean Academics)",
+      office: "Academic Council Secretariat, Main Building",
+      contact: "dean.academics@campus.edu",
+      description: "Classroom projectors, smart boards, furniture, podium microphones, and acoustics.",
+      sla: "24-48 Hours",
+      color: "from-sky-600 to-blue-800",
+    },
+    {
+      category: "Computer Lab",
+      lead: "Prof. Rajesh Gupta (Computer Center Head)",
+      office: "CSE Computer Labs 1-4, 2nd Floor",
+      contact: "lab.cse@campus.edu",
+      description: "PC hardware, software licenses, lab network, peripherals, and programming IDE environments.",
+      sla: "12-24 Hours",
+      color: "from-violet-600 to-purple-800",
+    },
+    {
+      category: "Parking & Transport",
       lead: "Mr. Baldev Singh (Transport Officer)",
       office: "Bus Garage & Fleet Control Desk",
       contact: "transport@campus.edu",
-      description: "University bus route delays, route expansion requests, and bus pass validation.",
-      sla: "48 Hours",
-      color: "from-sky-500 to-blue-600",
+      description: "College bus routes, driver conduct, student shuttle schedules, and campus parking bays.",
+      sla: "24-48 Hours",
+      color: "from-amber-600 to-orange-700",
     },
     {
-      category: "Fees",
-      lead: "Mr. R. K. Mukherjee (Chief Accounts Officer)",
-      office: "Finance & Accounts Branch, Ground Floor",
-      contact: "finance.student@campus.edu",
-      description: "Semester fee receipts, scholarship disbursements, refund processing, and challan errors.",
+      category: "Sports & Recreation",
+      lead: "Dr. S. K. Yadav (Sports Director)",
+      office: "Campus Gymnasium & Sports Complex",
+      contact: "sports@campus.edu",
+      description: "Badminton court, gym gear, cricket/football grounds, table tennis, and sports kits.",
+      sla: "2-3 Days",
+      color: "from-lime-600 to-emerald-700",
+    },
+    {
+      category: "Campus Environment",
+      lead: "Er. K. N. Sastry (Chief Estate Officer)",
+      office: "Horticulture & Civil Works Section",
+      contact: "estate.green@campus.edu",
+      description: "Street lighting, drainage channels, pathway repairs, garden pruning, and campus waterlogging.",
+      sla: "2-4 Days",
+      color: "from-green-600 to-teal-800",
+    },
+    {
+      category: "Staff / Service Issue",
+      lead: "Dr. P. K. Sharma (Registrar Office)",
+      office: "Administration Block, Room 102",
+      contact: "registrar@campus.edu",
+      description: "Staff behavior, departmental response delays, unresolved tickets, and administrative assistance.",
       sla: "3-4 Business Days",
-      color: "from-violet-500 to-purple-600",
+      color: "from-pink-600 to-rose-700",
+    },
+    {
+      category: "General / Other",
+      lead: "Student Welfare Desk",
+      office: "Student Affairs Building, Ground Floor",
+      contact: "studentaffairs@campus.edu",
+      description: "General queries, miscellaneous grievances, and inter-departmental student support.",
+      sla: "3-5 Business Days",
+      color: "from-slate-500 to-slate-700",
     },
   ];
 
@@ -98,7 +179,7 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
     <div className="space-y-6 animate-in fade-in duration-300">
       <div className="bg-white rounded-2xl p-6 border border-[#E5EAF1] shadow-xs">
         <h2 className="text-xl font-bold text-slate-900">
-          Campus Grievance Categories & Department Desks
+          Campus Grievance Categories &amp; Department Desks
         </h2>
         <p className="text-xs text-slate-500 mt-1">
           Explore dedicated university redressal bodies, assigned officers, and guaranteed SLA resolution commitments.
@@ -119,19 +200,19 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
             >
               <div>
                 <div className={`p-4 bg-gradient-to-r ${item.color} text-white flex items-center justify-between`}>
-                  <h3 className="font-bold text-base">{item.category} Department</h3>
+                  <h3 className="font-bold text-base">{item.category}</h3>
                   <span className="text-xs font-semibold bg-white/20 px-2 py-0.5 rounded-full backdrop-blur-xs">
-                    {categoryCount} total tickets
+                    {categoryCount} ticket{categoryCount === 1 ? '' : 's'}
                   </span>
                 </div>
 
                 <div className="p-5 space-y-3.5 text-xs">
-                  <p className="text-slate-600 leading-relaxed">{item.description}</p>
+                  <p className="text-slate-600 leading-relaxed min-h-[36px]">{item.description}</p>
 
                   <div className="space-y-1.5 pt-2 border-t border-slate-100">
                     <div className="flex items-center justify-between text-slate-700">
                       <span className="font-semibold text-slate-400">Head Officer:</span>
-                      <span className="font-bold text-slate-900">{item.lead}</span>
+                      <span className="font-bold text-slate-900 truncate max-w-[170px]">{item.lead}</span>
                     </div>
 
                     <div className="flex items-center justify-between text-slate-700">
