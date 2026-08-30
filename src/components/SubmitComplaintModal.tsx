@@ -1,18 +1,20 @@
 import React, { useState } from "react";
 import {
   X,
+  Sparkles,
   UploadCloud,
+  CheckCircle2,
+  AlertCircle,
   FileText,
   Trash2,
+  Send,
+  Loader2,
   Bot,
-  Sparkles,
-  CheckCircle2,
+  ExternalLink,
   ArrowRight,
-  ShieldAlert,
-  AlertCircle,
-  HelpCircle
 } from "lucide-react";
 import confetti from "canvas-confetti";
+import { getAuthHeaders } from "../utils/auth";
 import { Category, Priority, StudentProfile, Complaint } from "../types";
 import { AIAnalysisCard } from "./AIAnalysisCard";
 
@@ -85,7 +87,7 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
       // 1. Trigger AI analysis on backend
       const aiResponse = await fetch("/api/ai/analyze-complaint", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           title: title.trim(),
           description: description.trim(),
@@ -99,7 +101,7 @@ export const SubmitComplaintModal: React.FC<SubmitComplaintModalProps> = ({
       // 2. Submit new complaint with AI results
       const res = await fetch("/api/complaints", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           studentId: studentProfile?.studentId || studentProfile?.id || "STU001",
           studentName: studentProfile?.name || "Student User",

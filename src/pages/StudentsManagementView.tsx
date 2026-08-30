@@ -18,6 +18,7 @@ import {
   Filter
 } from "lucide-react";
 import { Complaint } from "../types";
+import { getAuthHeaders } from "../utils/auth";
 
 export interface AdminStudentItem {
   id: string;
@@ -60,7 +61,9 @@ export const StudentsManagementView: React.FC<StudentsManagementViewProps> = ({
   const fetchStudents = async () => {
     try {
       setIsRefreshing(true);
-      const res = await fetch("/api/admin/students");
+      const res = await fetch("/api/admin/students", {
+        headers: getAuthHeaders("admin"),
+      });
       const data = await res.json();
       if (data && Array.isArray(data.students)) {
         setStudents(data.students);

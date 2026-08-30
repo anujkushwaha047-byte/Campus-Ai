@@ -19,7 +19,7 @@ export function getStoredAuth(): AuthSession | null {
     if (!raw) return null;
 
     const session: AuthSession = JSON.parse(raw);
-    if (!session || !session.token || !session.student) {
+    if (!session || !session.token || !session.student || !session.student.rollNumber) {
       clearStoredAuth();
       return null;
     }
@@ -71,4 +71,21 @@ export function clearStoredAuth(): void {
  */
 export function isAuthenticated(): boolean {
   return getStoredAuth() !== null;
+}
+
+/**
+ * Helper to construct standard authorization headers for API calls.
+ */
+export function getAuthHeaders(userRole?: "admin" | "student"): Record<string, string> {
+  const session = getStoredAuth();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (session?.token) {
+    headers["Authorization"] = `Bearer ${session.token}`;
+  }
+  if (userRole) {
+    headers["x-user-role"] = userRole;
+  }
+  return headers;
 }

@@ -25,7 +25,7 @@ import { ResolveConfirmationModal } from "./components/ResolveConfirmationModal"
 import { StudentsManagementView } from "./pages/StudentsManagementView";
 import { LoginPage } from "./pages/LoginPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import { getStoredAuth, saveStoredAuth, clearStoredAuth, isAuthenticated } from "./utils/auth";
+import { getStoredAuth, saveStoredAuth, clearStoredAuth, isAuthenticated, getAuthHeaders } from "./utils/auth";
 import { CheckCircle2, AlertCircle, Info, Sparkles } from "lucide-react";
 
 // Default Initial Analytics Data (Matches Reference Dashboard Metrics)
@@ -119,10 +119,14 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
   // Fetch initial data from server
   const fetchComplaints = async () => {
     try {
-      const res = await fetch("/api/complaints");
+      const res = await fetch("/api/complaints", {
+        headers: getAuthHeaders(userRole),
+      });
       const data = await res.json();
       if (Array.isArray(data)) {
         setComplaints(data);
+      } else if (data && Array.isArray(data.complaints)) {
+        setComplaints(data.complaints);
       }
     } catch (err) {
       console.warn("Using local complaints cache");
@@ -131,7 +135,9 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
 
   const fetchAnalytics = async () => {
     try {
-      const res = await fetch("/api/analytics");
+      const res = await fetch("/api/analytics", {
+        headers: getAuthHeaders(userRole),
+      });
       const data = await res.json();
       if (data && data.totalComplaints) {
         setAnalytics(data);
@@ -143,10 +149,14 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
 
   const fetchNotifications = async () => {
     try {
-      const res = await fetch("/api/notifications");
+      const res = await fetch("/api/notifications", {
+        headers: getAuthHeaders(userRole),
+      });
       const data = await res.json();
       if (Array.isArray(data)) {
         setNotifications(data);
+      } else if (data && Array.isArray(data.notifications)) {
+        setNotifications(data.notifications);
       }
     } catch (err) {
       console.warn("Using local notifications cache");
@@ -157,7 +167,7 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
     fetchComplaints();
     fetchAnalytics();
     fetchNotifications();
-  }, []);
+  }, [userRole]);
 
   // Sync tab when switching roles
   const handleSwitchRole = (role: "admin" | "student") => {
@@ -199,7 +209,7 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
     try {
       const res = await fetch(`/api/complaints/${selectedComplaint.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(userRole),
         body: JSON.stringify(updates),
       });
       const data = await res.json();
@@ -223,13 +233,10 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
     try {
       const res = await fetch(`/api/complaints/${complaintId}/resolve`, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "x-user-role": userRole,
-        },
+        headers: getAuthHeaders("admin"),
         body: JSON.stringify({
-          role: userRole,
-          author: userRole === "admin" ? "Super Administrator" : "Department Officer",
+          role: "admin",
+          author: "Super Administrator",
           resolutionNote,
         }),
       });

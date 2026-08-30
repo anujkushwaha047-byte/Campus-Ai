@@ -14,6 +14,7 @@ import {
   FileSpreadsheet
 } from "lucide-react";
 import { AnalyticsData, Complaint } from "../types";
+import { getAuthHeaders } from "../utils/auth";
 
 interface AIReportsViewProps {
   analytics: AnalyticsData;
@@ -36,7 +37,7 @@ export const AIReportsView: React.FC<AIReportsViewProps> = ({
     try {
       const res = await fetch("/api/ai/generate-insights", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders("admin"),
         body: JSON.stringify({ query: aiPrompt }),
       });
       const data = await res.json();
