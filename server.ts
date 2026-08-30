@@ -74,11 +74,11 @@ function initStudentsCsv() {
   if (!fs.existsSync(STUDENTS_CSV_PATH)) {
     const header = "student_id,roll_number,email,phone,email_verified,registration_date\n";
     const initialRows = [
-      "STU001,2022CSB1044,rahul.sharma@campus.edu.in,9876543210,true,2026-08-15",
-      "STU002,2023ECE052,aman.verma@college.edu.in,9123456780,true,2026-08-15",
-      "STU003,2021MEB021,neha.singh@university.edu.in,9876501234,true,2026-08-15",
-      "STU004,2022IT089,priya.patel@engineering.edu.in,9765432109,true,2026-08-15",
-      "STU005,23AIML001,student@college.edu.in,9876543210,true,2026-08-15"
+      "STU001,23AIML001,student@college.edu.in,9876543210,true,2026-08-15",
+      "STU002,2021MEB021,ankit.singh@college.edu.in,9876501234,true,2026-08-15",
+      "STU003,2023ECE052,abhinav.tiwari@college.edu.in,9123456780,true,2026-08-15",
+      "STU004,2022CSB1044,rahul.sharma@campus.edu.in,9876543210,true,2026-08-15",
+      "STU005,2022IT089,adheshwari.gupta@college.edu.in,9765432109,true,2026-08-15"
     ].join("\n") + "\n";
     fs.writeFileSync(STUDENTS_CSV_PATH, header + initialRows, "utf8");
   }
@@ -811,10 +811,10 @@ let notifications: DBNotification[] = [
 // Known student academic metadata helper
 const studentAcademicDirectory: Record<string, { name: string; department: string; year: string }> = {
   "2022CSB1044": { name: "Rahul Sharma", department: "Computer Science & Engineering", year: "3rd Year" },
-  "2023ECE052": { name: "Aman Verma", department: "Electronics & Communication", year: "2nd Year" },
-  "2021MEB021": { name: "Neha Singh", department: "Mechanical Engineering", year: "4th Year" },
-  "2022IT089": { name: "Priya Patel", department: "Information Technology", year: "3rd Year" },
-  "23AIML001": { name: "Aarav Gupta", department: "Artificial Intelligence & ML", year: "2nd Year" }
+  "2023ECE052": { name: "Abhinav Tiwari", department: "Electronics & Communication", year: "2nd Year" },
+  "2021MEB021": { name: "Ankit Kumar Singh", department: "Mechanical Engineering", year: "4th Year" },
+  "2022IT089": { name: "Adheshwari Gupta", department: "Information Technology", year: "3rd Year" },
+  "23AIML001": { name: "Anuj Kushwaha", department: "Artificial Intelligence & ML", year: "2nd Year" }
 };
 
 
