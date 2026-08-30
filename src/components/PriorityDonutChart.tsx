@@ -22,17 +22,18 @@ export const PriorityDonutChart: React.FC<PriorityDonutChartProps> = ({
     if (active && payload && payload.length) {
       const item = payload[0].payload;
       return (
-        <div className="bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-md text-xs">
+        <div className="bg-slate-900 text-white px-3.5 py-2.5 rounded-xl shadow-xl border border-slate-700 text-xs z-50 animate-in fade-in">
           <div className="flex items-center gap-2">
             <span
-              className="w-2.5 h-2.5 rounded-full"
+              className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
               style={{ backgroundColor: item.color }}
             />
-            <span className="font-bold text-slate-900">{item.name}</span>
+            <span className="font-extrabold">{item.name} Priority</span>
           </div>
-          <p className="text-slate-600 font-semibold mt-1">
-            {item.value} complaints ({item.percentage}%)
-          </p>
+          <div className="mt-1.5 flex items-center justify-between gap-4 text-[11px] text-slate-300">
+            <span>Volume: <strong className="text-white font-mono">{item.value}</strong></span>
+            <span>Share: <strong className="text-emerald-400 font-mono font-bold">{item.percentage}%</strong></span>
+          </div>
         </div>
       );
     }
@@ -40,71 +41,79 @@ export const PriorityDonutChart: React.FC<PriorityDonutChartProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-2xl p-5 sm:p-6 border border-[#E5EAF1] shadow-xs flex flex-col h-full">
+    <div className="bg-white rounded-2xl p-4 sm:p-6 border border-[#E5EAF1] shadow-xs flex flex-col justify-between h-full min-h-0">
       {/* Header */}
       <div className="mb-3">
-        <h3 className="text-base font-bold text-slate-900 tracking-tight">
+        <h3 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight">
           AI Priority Distribution
         </h3>
-        <p className="text-xs text-slate-400 mt-0.5">
-          Triage classification breakdown
+        <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5">
+          Triage classification breakdown &amp; volume share
         </p>
       </div>
 
-      {/* Donut & Legend Container - Centered Vertically */}
-      <div className="flex-1 flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-5 py-2">
-        {/* Recharts Donut */}
-        <div className="relative w-32 h-32 shrink-0 flex items-center justify-center">
+      {/* Donut & Legend Container - Responsive Stack/Flow for All Zoom Levels (100% to 250%) */}
+      <div className="flex-1 flex flex-col sm:flex-row xl:flex-col 2xl:flex-row items-center justify-center gap-4 sm:gap-6 py-2">
+        {/* Recharts Donut Area with Centered Badge */}
+        <div className="relative w-32 h-32 sm:w-36 sm:h-36 shrink-0 flex items-center justify-center mx-auto">
           <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
+            <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
               <Tooltip content={<CustomTooltip />} />
               <Pie
                 data={data}
                 cx="50%"
                 cy="50%"
-                innerRadius={38}
-                outerRadius={56}
+                innerRadius={40}
+                outerRadius={58}
                 paddingAngle={3}
                 dataKey="value"
                 strokeWidth={0}
               >
                 {data.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
+                  <Cell key={`priority-cell-${index}`} fill={entry.color} />
                 ))}
               </Pie>
             </PieChart>
           </ResponsiveContainer>
 
           {/* Centered Total Label */}
-          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-            <span className="text-lg font-extrabold text-slate-900 leading-tight">
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
+            <span className="text-lg sm:text-xl font-extrabold text-slate-900 leading-none font-mono">
               {totalComplaints}
             </span>
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
               Total
             </span>
           </div>
         </div>
 
-        {/* Legend List */}
-        <div className="flex-1 min-w-0 w-full space-y-1.5">
+        {/* Legend List - Ample Breathing Room & Structured Separation */}
+        <div className="w-full flex-1 min-w-0 space-y-2">
           {data.map((item) => (
             <div
               key={item.name}
-              className="flex items-center justify-between gap-2 text-xs py-1 px-2 rounded-lg hover:bg-slate-50 transition-colors"
+              className="flex items-center justify-between gap-3 text-xs py-1.5 px-3 rounded-xl bg-slate-50/80 hover:bg-blue-50/50 border border-slate-100 hover:border-blue-200 transition-all duration-150 group"
             >
-              <div className="flex items-center gap-2 min-w-0">
+              {/* Left Section: Dot + Priority Label + Count */}
+              <div className="flex items-center gap-2 min-w-0 overflow-hidden">
                 <span
-                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                  className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs group-hover:scale-110 transition-transform"
                   style={{ backgroundColor: item.color }}
                 />
-                <span className="text-slate-700 font-semibold text-xs whitespace-nowrap">
+                <span className="text-slate-800 font-bold text-xs truncate">
                   {item.name}
                 </span>
+                <span className="text-[11px] text-slate-400 font-medium font-mono shrink-0">
+                  ({item.value})
+                </span>
               </div>
-              <span className="text-slate-900 font-bold shrink-0 text-xs tabular-nums ml-2">
-                {item.percentage}%
-              </span>
+
+              {/* Right Section: Percentage Share Badge */}
+              <div className="flex items-center shrink-0 pl-2">
+                <span className="text-slate-900 font-extrabold text-xs tabular-nums font-mono bg-white px-2 py-0.5 rounded-md border border-slate-200 shadow-2xs">
+                  {item.percentage}%
+                </span>
+              </div>
             </div>
           ))}
         </div>
