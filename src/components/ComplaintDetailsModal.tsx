@@ -148,7 +148,7 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-[#E5EAF1] px-4 sm:px-6 bg-white overflow-x-auto">
+        <div className="flex border-b border-[#E5EAF1] px-4 sm:px-6 bg-white overflow-x-auto gap-1 sm:gap-2">
           {[
             { id: "overview", label: "Overview & AI" },
             { id: "timeline", label: "Timeline" },
@@ -158,13 +158,16 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`py-3 sm:py-3.5 px-3 sm:px-4 text-xs sm:text-sm font-bold border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
+              className={`relative py-3.5 px-3 sm:px-4 text-xs sm:text-sm font-bold whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1.5 ${
                 activeTab === tab.id
-                  ? "border-[#146EF5] text-[#146EF5]"
-                  : "border-transparent text-slate-500 hover:text-slate-900"
+                  ? "text-[#146EF5]"
+                  : "text-slate-500 hover:text-slate-900"
               }`}
             >
-              {tab.label}
+              <span>{tab.label}</span>
+              {activeTab === tab.id && (
+                <span className="absolute bottom-0 inset-x-0 h-[2.5px] bg-[#146EF5] rounded-t-sm" />
+              )}
             </button>
           ))}
         </div>

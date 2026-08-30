@@ -11,3 +11,4 @@ services:
         value: production
       - key: ALLOWED_COLLEGE_EMAIL_DOMAIN
         value: .edu.in
+
