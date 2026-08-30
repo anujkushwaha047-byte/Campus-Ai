@@ -55,13 +55,6 @@ interface LoginPageProps {
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const navigate = useNavigate();
 
-  // Redirect to dashboard if already authenticated
-  useEffect(() => {
-    if (isAuthenticated()) {
-      navigate("/dashboard", { replace: true });
-    }
-  }, [navigate]);
-
   const [step, setStep] = useState<"details" | "otp" | "success">("details");
   const [rollNumber, setRollNumber] = useState("23AIML001");
   const [email, setEmail] = useState("student@college.edu.in");

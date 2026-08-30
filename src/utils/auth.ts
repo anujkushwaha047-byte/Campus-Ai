@@ -61,6 +61,12 @@ export function saveStoredAuth(token: string, student: StudentProfile): void {
 export function clearStoredAuth(): void {
   try {
     localStorage.removeItem(AUTH_STORAGE_KEY);
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    localStorage.removeItem("student");
+    localStorage.removeItem("studentProfile");
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("isUserAuth");
   } catch (err) {
     console.error("Failed to clear auth session:", err);
   }

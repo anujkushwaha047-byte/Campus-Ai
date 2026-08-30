@@ -603,7 +603,10 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* 1 & 2 & 3. Login Route: Show LoginPage when unauthenticated, redirect to /dashboard when authenticated */}
+        {/* 1. Root route: Unconditionally redirect "/" to "/login" */}
+        <Route path="/" element={<Navigate to="/login" replace />} />
+
+        {/* 2 & 3. Login Route: Show LoginPage when unauthenticated, redirect to /dashboard when authenticated */}
         <Route
           path="/login"
           element={
@@ -628,9 +631,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* 1. Root route: Unconditionally redirect "/" to "/login" */}
-        <Route path="/" element={<Navigate to="/login" replace />} />
 
         {/* Wildcard catch-all: redirect any unknown URL to "/login" */}
         <Route path="*" element={<Navigate to="/login" replace />} />
