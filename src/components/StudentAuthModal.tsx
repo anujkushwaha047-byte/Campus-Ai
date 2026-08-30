@@ -13,6 +13,7 @@ import {
   X
 } from "lucide-react";
 import { StudentProfile } from "../types";
+import { saveStoredAuth } from "../utils/auth";
 
 interface StudentAuthModalProps {
   isOpen: boolean;
@@ -155,6 +156,9 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
 
       const data = await res.json();
       if (data.success && data.student) {
+        if (data.token) {
+          saveStoredAuth(data.token, data.student);
+        }
         onLoginSuccess(data.student);
         onClose();
       } else {

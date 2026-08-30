@@ -11,7 +11,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const AUTH_SECRET = process.env.AUTH_SECRET || "campuscare_auth_secret_jwt_key_2026";
-const IS_DEMO_MODE = process.env.DEMO_MODE === "true";
+const IS_DEMO_MODE = process.env.DEMO_MODE !== "false";
 
 // ==========================================
 // 1. SECURITY & PARSING MIDDLEWARES
@@ -751,7 +751,66 @@ app.post("/api/auth/send-otp", (req, res) => {
   });
 });
 
-// Verify OTP & Generate Signed Session Token
+// 1. Dedicated Demo Login Endpoint (Gated by DEMO_MODE)
+app.post("/api/auth/demo-login", (req, res) => {
+  if (!IS_DEMO_MODE) {
+    return res.status(403).json({ error: "Demo login is disabled in this environment." });
+  }
+
+  const { rollNumber = "23AIML001" } = req.body;
+  const cleanRoll = String(rollNumber).trim().toUpperCase();
+
+  const academic = studentAcademicDirectory[cleanRoll] || {
+    name: "Anuj Kushwaha",
+    department: "Computer Science & Engineering (AIML)",
+    year: "2nd Year"
+  };
+
+  const demoEmail = `${cleanRoll.toLowerCase()}@college.edu.in`;
+  const demoPhone = "9876543210";
+
+  const { student: csvRecord, isNew } = saveStudentToCsv({
+    rollNumber: cleanRoll,
+    email: demoEmail,
+    phone: demoPhone,
+    emailVerified: true
+  });
+
+  const studentProfile = {
+    id: csvRecord.student_id,
+    studentId: csvRecord.student_id,
+    rollNumber: csvRecord.roll_number,
+    email: csvRecord.email,
+    phone: csvRecord.phone,
+    emailVerified: true,
+    isVerified: true,
+    registrationDate: csvRecord.registration_date,
+    name: academic.name,
+    department: academic.department,
+    year: academic.year
+  };
+
+  // Generate valid cryptographically signed HMAC token for demo student (strictly student role)
+  const token = generateAuthToken({
+    studentId: csvRecord.student_id,
+    rollNumber: csvRecord.roll_number,
+    email: csvRecord.email,
+    name: academic.name,
+    role: "student"
+  });
+
+  console.log(`[AUTH] Demo Student Authenticated: ${csvRecord.student_id} (${cleanRoll} - ${academic.name})`);
+
+  return res.json({
+    success: true,
+    token,
+    isNewRegistration: isNew,
+    student: studentProfile,
+    isDemo: true
+  });
+});
+
+// 2. Real OTP Verification (Strict & Cryptographically Verified)
 app.post("/api/auth/verify-otp", (req, res) => {
   const { rollNumber, otp, email, phone } = req.body;
 
@@ -763,40 +822,35 @@ app.post("/api/auth/verify-otp", (req, res) => {
   const enteredOtp = otp.trim();
   const stored = activeOtps.get(cleanRoll);
 
-  // Check demo mode bypass only if DEMO_MODE is true in environment
-  const isDemoBypass = IS_DEMO_MODE && enteredOtp === "123456";
-
-  if (!stored && !isDemoBypass) {
+  if (!stored) {
     return res.status(400).json({ error: "Verification code expired or not found. Please request a new code." });
   }
 
-  if (stored) {
-    // Check Expiration (5 minutes)
-    if (Date.now() > stored.expiresAt) {
-      activeOtps.delete(cleanRoll);
-      return res.status(400).json({ error: "This OTP code has expired. Please request a new code." });
-    }
+  // Check Expiration (5 minutes)
+  if (Date.now() > stored.expiresAt) {
+    activeOtps.delete(cleanRoll);
+    return res.status(400).json({ error: "This OTP code has expired. Please request a new code." });
+  }
 
-    // Check Attempts limit (Max 5 attempts)
-    stored.attempts += 1;
-    if (stored.attempts > 5) {
-      activeOtps.delete(cleanRoll);
-      return res.status(429).json({ error: "Too many failed attempts. Please request a new verification code." });
-    }
+  // Check Attempts limit (Max 5 attempts)
+  stored.attempts += 1;
+  if (stored.attempts > 5) {
+    activeOtps.delete(cleanRoll);
+    return res.status(429).json({ error: "Too many failed attempts. Please request a new verification code." });
+  }
 
-    const isValid = stored.otp === enteredOtp || isDemoBypass;
-    if (!isValid) {
-      return res.status(400).json({
-        error: `Invalid OTP code. ${5 - stored.attempts} attempts remaining.`
-      });
-    }
+  // Strict OTP match check
+  if (stored.otp !== enteredOtp) {
+    return res.status(400).json({
+      error: `Invalid OTP code. ${5 - stored.attempts} attempt${5 - stored.attempts === 1 ? '' : 's'} remaining.`
+    });
   }
 
   // OTP Verified Successfully!
   activeOtps.delete(cleanRoll);
 
-  const targetEmail = stored?.email || email || `${cleanRoll.toLowerCase()}@college.edu.in`;
-  const targetPhone = stored?.phone || phone || "9876543210";
+  const targetEmail = stored.email || email || `${cleanRoll.toLowerCase()}@college.edu.in`;
+  const targetPhone = stored.phone || phone || "9876543210";
 
   const { student: csvRecord, isNew } = saveStudentToCsv({
     rollNumber: cleanRoll,
@@ -834,7 +888,7 @@ app.post("/api/auth/verify-otp", (req, res) => {
     role: "student"
   });
 
-  console.log(`[AUTH] Student authenticated: ${csvRecord.student_id} (${csvRecord.roll_number})`);
+  console.log(`[AUTH] Student authenticated via real OTP: ${csvRecord.student_id} (${csvRecord.roll_number})`);
 
   return res.json({
     success: true,

@@ -225,46 +225,29 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   };
 
   // 1-Click Instant Demo Login
-  const handleInstantDemoLogin = async (demoRoll = "23AIML001", demoEmail = "student@college.edu.in", demoPhone = "9876543210") => {
+  const handleInstantDemoLogin = async (demoRoll = "23AIML001", _demoEmail?: string, _demoPhone?: string) => {
     setErrorMsg("");
     setIsDemoLoggingIn(true);
     try {
-      const sendRes = await fetch("/api/auth/send-otp", {
+      const res = await fetch("/api/auth/demo-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rollNumber: demoRoll,
-          email: demoEmail,
-          phone: demoPhone,
-        }),
+        body: JSON.stringify({ rollNumber: demoRoll }),
       });
-      const sendData = await sendRes.json();
-      const codeToUse = sendData.demoOtp || "123456";
 
-      const verifyRes = await fetch("/api/auth/verify-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rollNumber: demoRoll,
-          email: demoEmail,
-          phone: demoPhone,
-          otp: codeToUse,
-        }),
-      });
-      const verifyData = await verifyRes.json();
+      const data = await res.json();
 
-      if (verifyData.success && verifyData.student) {
-        setVerifiedStudent(verifyData.student);
+      if (data.success && data.student && data.token) {
+        setVerifiedStudent(data.student);
         setStep("success");
-        const token = verifyData.token || `auth_token_demo_${Date.now()}`;
-        saveStoredAuth(token, verifyData.student);
+        saveStoredAuth(data.token, data.student);
 
         setTimeout(() => {
-          onLoginSuccess(verifyData.student);
+          onLoginSuccess(data.student);
           navigate("/dashboard", { replace: true });
         }, 800);
       } else {
-        setErrorMsg(verifyData.error || "Demo authentication failed. Please try standard login.");
+        setErrorMsg(data.error || "Demo authentication failed. Please try standard login.");
       }
     } catch (err) {
       setErrorMsg("Failed to connect to backend server for demo login.");
