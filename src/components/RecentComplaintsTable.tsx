@@ -1,22 +1,26 @@
 import React from "react";
 import { Complaint } from "../types";
 import { PriorityBadge, StatusBadge } from "./PriorityBadge";
-import { ArrowRight, Eye, Calendar } from "lucide-react";
+import { ArrowRight, Eye, CheckCircle2, Calendar, Check } from "lucide-react";
 
 interface RecentComplaintsTableProps {
   complaints: Complaint[];
   onViewComplaint: (complaint: Complaint) => void;
+  onResolveComplaint?: (complaint: Complaint) => void;
   onViewAll?: () => void;
   title?: string;
   showViewAll?: boolean;
+  userRole?: string;
 }
 
 export const RecentComplaintsTable: React.FC<RecentComplaintsTableProps> = ({
   complaints,
   onViewComplaint,
+  onResolveComplaint,
   onViewAll,
   title = "Recent Complaints",
   showViewAll = true,
+  userRole = "admin",
 }) => {
   return (
     <div className="bg-white rounded-2xl border border-[#E5EAF1] shadow-xs overflow-hidden">
@@ -27,7 +31,7 @@ export const RecentComplaintsTable: React.FC<RecentComplaintsTableProps> = ({
             {title}
           </h3>
           <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5">
-            Real-time feed with automated AI triage ratings
+            Real-time feed with automated AI triage ratings and 1-click resolution
           </p>
         </div>
 
@@ -56,6 +60,7 @@ export const RecentComplaintsTable: React.FC<RecentComplaintsTableProps> = ({
               month: "short",
               year: "numeric",
             });
+            const isResolved = c.status === "Resolved";
 
             return (
               <div
@@ -65,7 +70,7 @@ export const RecentComplaintsTable: React.FC<RecentComplaintsTableProps> = ({
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-xs text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md">
+                    <span className="font-bold text-xs text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md font-mono">
                       {c.id.startsWith("CMP-") ? `#${c.id.replace("CMP-", "")}` : `#${c.id}`}
                     </span>
                     <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">
@@ -76,6 +81,12 @@ export const RecentComplaintsTable: React.FC<RecentComplaintsTableProps> = ({
                     <Calendar className="w-3 h-3" />
                     {formattedDate}
                   </span>
+                </div>
+
+                <div>
+                  <h4 className="text-xs sm:text-sm font-bold text-slate-900 line-clamp-1">
+                    {c.title}
+                  </h4>
                 </div>
 
                 <div className="flex items-center justify-between gap-2">
@@ -99,22 +110,25 @@ export const RecentComplaintsTable: React.FC<RecentComplaintsTableProps> = ({
                   </div>
                 </div>
 
-                <p className="text-xs text-slate-600 line-clamp-1">
-                  <span className="font-semibold text-slate-700">AI: </span>
-                  {c.aiReason}
-                </p>
-
-                <div className="pt-1 flex justify-end">
+                <div className="pt-1 flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onViewComplaint(c);
-                    }}
-                    className="px-3 py-1 text-xs font-bold text-[#146EF5] bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center gap-1"
+                    onClick={() => onViewComplaint(c)}
+                    className="px-3 py-1 text-xs font-bold text-[#146EF5] bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
                   >
                     <Eye className="w-3.5 h-3.5" />
-                    View Details
+                    <span>View</span>
                   </button>
+
+                  {userRole === "admin" && onResolveComplaint && !isResolved && (
+                    <button
+                      id={`btn-resolve-mobile-${c.id}`}
+                      onClick={() => onResolveComplaint(c)}
+                      className="px-3 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Resolve</span>
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -124,23 +138,22 @@ export const RecentComplaintsTable: React.FC<RecentComplaintsTableProps> = ({
 
       {/* Desktop / Tablet Table (Visible on sm+ screens) */}
       <div className="hidden sm:block overflow-x-auto">
-        <table className="w-full text-left text-xs sm:text-sm border-collapse min-w-[700px]">
+        <table className="w-full text-left text-xs sm:text-sm border-collapse min-w-[760px]">
           <thead>
             <tr className="border-b border-slate-100 bg-slate-50/70 text-slate-500 font-semibold uppercase tracking-wider text-[11px]">
-              <th className="py-3.5 px-6">ID</th>
-              <th className="py-3.5 px-4">Student</th>
+              <th className="py-3.5 px-6">Complaint ID</th>
+              <th className="py-3.5 px-4">Subject</th>
               <th className="py-3.5 px-4">Category</th>
-              <th className="py-3.5 px-4">Priority</th>
+              <th className="py-3.5 px-4">Student</th>
               <th className="py-3.5 px-4">Status</th>
               <th className="py-3.5 px-4">Date</th>
-              <th className="py-3.5 px-4">AI Reason</th>
               <th className="py-3.5 px-6 text-right">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 font-medium">
             {complaints.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-12 text-center text-slate-400 text-xs">
+                <td colSpan={7} className="py-12 text-center text-slate-400 text-xs">
                   No complaints found matching current filters.
                 </td>
               </tr>
@@ -151,6 +164,7 @@ export const RecentComplaintsTable: React.FC<RecentComplaintsTableProps> = ({
                   month: "short",
                   year: "numeric",
                 });
+                const isResolved = c.status === "Resolved";
 
                 return (
                   <tr
@@ -158,9 +172,26 @@ export const RecentComplaintsTable: React.FC<RecentComplaintsTableProps> = ({
                     className="hover:bg-blue-50/30 transition-colors group cursor-pointer"
                     onClick={() => onViewComplaint(c)}
                   >
-                    {/* ID */}
-                    <td className="py-4 px-6 font-bold text-slate-900 whitespace-nowrap">
+                    {/* Complaint ID */}
+                    <td className="py-4 px-6 font-bold text-slate-900 whitespace-nowrap font-mono">
                       {c.id.startsWith("CMP-") ? `#${c.id.replace("CMP-", "")}` : `#${c.id}`}
+                    </td>
+
+                    {/* Subject (Title) */}
+                    <td className="py-4 px-4 max-w-xs">
+                      <p className="font-bold text-slate-900 truncate" title={c.title}>
+                        {c.title}
+                      </p>
+                      <p className="text-[11px] text-slate-400 truncate" title={c.aiReason}>
+                        <span className="font-semibold text-slate-500">AI:</span> {c.aiReason}
+                      </p>
+                    </td>
+
+                    {/* Category */}
+                    <td className="py-4 px-4 text-slate-700 whitespace-nowrap">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-semibold">
+                        {c.category}
+                      </span>
                     </td>
 
                     {/* Student */}
@@ -173,23 +204,11 @@ export const RecentComplaintsTable: React.FC<RecentComplaintsTableProps> = ({
                           <p className="font-bold text-slate-900 leading-tight">
                             {c.studentName}
                           </p>
-                          <p className="text-[11px] text-slate-400">
+                          <p className="text-[11px] text-slate-400 font-mono">
                             {c.studentRoll}
                           </p>
                         </div>
                       </div>
-                    </td>
-
-                    {/* Category */}
-                    <td className="py-4 px-4 text-slate-700 whitespace-nowrap">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-semibold">
-                        {c.category}
-                      </span>
-                    </td>
-
-                    {/* Priority */}
-                    <td className="py-4 px-4 whitespace-nowrap">
-                      <PriorityBadge priority={c.priority} />
                     </td>
 
                     {/* Status */}
@@ -202,12 +221,7 @@ export const RecentComplaintsTable: React.FC<RecentComplaintsTableProps> = ({
                       {formattedDate}
                     </td>
 
-                    {/* AI Reason */}
-                    <td className="py-4 px-4 text-slate-600 text-xs max-w-xs truncate" title={c.aiReason}>
-                      {c.aiReason}
-                    </td>
-
-                    {/* Action */}
+                    {/* Actions: View & Resolve */}
                     <td className="py-4 px-6 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                         <button
@@ -216,8 +230,27 @@ export const RecentComplaintsTable: React.FC<RecentComplaintsTableProps> = ({
                           className="px-3 py-1 text-xs font-bold text-[#146EF5] bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
                         >
                           <Eye className="w-3.5 h-3.5" />
-                          View
+                          <span>View</span>
                         </button>
+
+                        {userRole === "admin" && onResolveComplaint && (
+                          !isResolved ? (
+                            <button
+                              id={`btn-resolve-${c.id}`}
+                              onClick={() => onResolveComplaint(c)}
+                              className="px-3 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                              title="Mark complaint as resolved"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Resolve</span>
+                            </button>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-emerald-700 bg-emerald-50/70 border border-emerald-200/60 rounded-lg">
+                              <Check className="w-3 h-3 text-emerald-600" />
+                              <span>Resolved</span>
+                            </span>
+                          )
+                        )}
                       </div>
                     </td>
                   </tr>

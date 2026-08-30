@@ -69,3 +69,4 @@ export const PROJECT_CREDITS = [
   { area: "Database & Authentication", description: "Verified .edu.in student multi-factor OTP verification with CSV registry and in-memory persistence." },
   { area: "Testing & Deployment", description: "Automated Vite production build, TypeScript verification, and Render cloud hosting." },
 ] as const;
+

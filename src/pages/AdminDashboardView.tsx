@@ -21,6 +21,7 @@ interface AdminDashboardViewProps {
   analytics: AnalyticsData;
   complaints: Complaint[];
   onViewComplaint: (complaint: Complaint) => void;
+  onResolveComplaint?: (complaint: Complaint) => void;
   onNavigateToTab: (tab: string) => void;
   onOpenSubmitModal: () => void;
 }
@@ -29,6 +30,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   analytics,
   complaints,
   onViewComplaint,
+  onResolveComplaint,
   onNavigateToTab,
   onOpenSubmitModal,
 }) => {
@@ -120,7 +122,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           <RecentComplaintsTable
             complaints={recentFiveComplaints}
             onViewComplaint={onViewComplaint}
+            onResolveComplaint={onResolveComplaint}
             onViewAll={() => onNavigateToTab("all_complaints")}
+            userRole="admin"
           />
         </div>
 

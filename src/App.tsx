@@ -21,6 +21,7 @@ import { StudentProfileView } from "./pages/StudentProfileView";
 import { ComplaintDetailsModal } from "./components/ComplaintDetailsModal";
 import { SubmitComplaintModal } from "./components/SubmitComplaintModal";
 import { StudentAuthModal } from "./components/StudentAuthModal";
+import { ResolveConfirmationModal } from "./components/ResolveConfirmationModal";
 import { StudentsManagementView } from "./pages/StudentsManagementView";
 import { LoginPage } from "./pages/LoginPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -103,6 +104,7 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
 
   // Modals
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
+  const [resolvingComplaint, setResolvingComplaint] = useState<Complaint | null>(null);
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
@@ -214,6 +216,42 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
     } catch (err) {
       console.error(err);
       showToast("Failed to update complaint.", "error");
+    }
+  };
+
+  const handleResolveComplaint = async (complaintId: string, resolutionNote?: string) => {
+    try {
+      const res = await fetch(`/api/complaints/${complaintId}/resolve`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-role": userRole,
+        },
+        body: JSON.stringify({
+          role: userRole,
+          author: userRole === "admin" ? "Super Administrator" : "Department Officer",
+          resolutionNote,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success && data.complaint) {
+        setComplaints((prev) =>
+          prev.map((c) => (c.id === data.complaint.id ? data.complaint : c))
+        );
+        if (selectedComplaint && selectedComplaint.id === data.complaint.id) {
+          setSelectedComplaint(data.complaint);
+        }
+        fetchAnalytics();
+        fetchNotifications();
+        showToast(`Complaint #${data.complaint.id} marked as resolved.`, "success");
+      } else {
+        throw new Error(data.error || "Failed to mark complaint as resolved.");
+      }
+    } catch (err: any) {
+      console.error("Resolve error:", err);
+      showToast(err.message || "Failed to resolve complaint.", "error");
+      throw err;
     }
   };
 
@@ -346,6 +384,7 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
               analytics={analytics}
               complaints={complaints}
               onViewComplaint={(c) => setSelectedComplaint(c)}
+              onResolveComplaint={(c) => setResolvingComplaint(c)}
               onNavigateToTab={setCurrentTab}
               onOpenSubmitModal={() => setIsSubmitModalOpen(true)}
             />
@@ -356,6 +395,8 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
             <ComplaintsListView
               complaints={complaints}
               onViewComplaint={(c) => setSelectedComplaint(c)}
+              onResolveComplaint={(c) => setResolvingComplaint(c)}
+              userRole={userRole}
               title="All Campus Complaints Directory"
             />
           )}
@@ -365,6 +406,8 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
             <ComplaintsListView
               complaints={complaints}
               onViewComplaint={(c) => setSelectedComplaint(c)}
+              onResolveComplaint={(c) => setResolvingComplaint(c)}
+              userRole={userRole}
               title="Critical Priority Complaints (Immediate Attention)"
               initialFilter={{ priority: "Critical" }}
             />
@@ -375,6 +418,8 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
             <ComplaintsListView
               complaints={complaints}
               onViewComplaint={(c) => setSelectedComplaint(c)}
+              onResolveComplaint={(c) => setResolvingComplaint(c)}
+              userRole={userRole}
               title="Pending Redressal Queue"
               initialFilter={{ status: "Pending" }}
             />
@@ -392,6 +437,7 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
                 analytics={analytics}
                 complaints={complaints}
                 onViewComplaint={(c) => setSelectedComplaint(c)}
+                onResolveComplaint={(c) => setResolvingComplaint(c)}
                 onNavigateToTab={setCurrentTab}
                 onOpenSubmitModal={() => setIsSubmitModalOpen(true)}
               />
@@ -482,6 +528,15 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
         onClose={() => setSelectedComplaint(null)}
         userRole={userRole}
         onUpdateComplaint={handleUpdateComplaint}
+        onResolveClick={(c) => setResolvingComplaint(c)}
+      />
+
+      {/* Admin Complaint Resolve Confirmation Modal */}
+      <ResolveConfirmationModal
+        isOpen={!!resolvingComplaint}
+        complaint={resolvingComplaint}
+        onClose={() => setResolvingComplaint(null)}
+        onConfirmResolve={handleResolveComplaint}
       />
 
       {/* Submit Complaint Wizard Modal */}

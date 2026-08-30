@@ -27,6 +27,7 @@ interface ComplaintDetailsModalProps {
   onClose: () => void;
   userRole: "admin" | "student";
   onUpdateComplaint: (updated: Partial<Complaint> & { newComment?: string; author?: string; role?: 'admin' | 'student' | 'officer'; overrideNote?: string }) => void;
+  onResolveClick?: (complaint: Complaint) => void;
 }
 
 export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
@@ -35,6 +36,7 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
   onClose,
   userRole,
   onUpdateComplaint,
+  onResolveClick,
 }) => {
   const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "comments" | "admin_actions">("overview");
   const [commentText, setCommentText] = useState("");
@@ -138,13 +140,33 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
             </h2>
           </div>
 
-          <button
-            id="btn-close-complaint-modal"
-            onClick={onClose}
-            className="p-1.5 sm:p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors shrink-0 cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {userRole === "admin" && complaint.status !== "Resolved" && (
+              <button
+                id="btn-modal-resolve-complaint"
+                onClick={() => {
+                  if (onResolveClick) {
+                    onResolveClick(complaint);
+                  } else {
+                    handleStatusChange("Resolved");
+                  }
+                }}
+                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+                title="Mark this complaint as resolved"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Resolve</span>
+              </button>
+            )}
+
+            <button
+              id="btn-close-complaint-modal"
+              onClick={onClose}
+              className="p-1.5 sm:p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Tab Navigation */}
