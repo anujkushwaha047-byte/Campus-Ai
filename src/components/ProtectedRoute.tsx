@@ -1,13 +1,15 @@
 import React from "react";
 import { Navigate } from "react-router-dom";
-import { isAuthenticated } from "../utils/auth";
+import { isAuthenticated, getStoredAuth } from "../utils/auth";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
-  if (!isAuthenticated()) {
+  const session = getStoredAuth();
+
+  if (!session || !isAuthenticated()) {
     return <Navigate to="/login" replace />;
   }
 

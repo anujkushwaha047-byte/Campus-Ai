@@ -591,11 +591,12 @@ export default function App() {
     setStudentProfile(null);
   };
 
-  const isUserAuth = isAuthenticated() && !!studentProfile;
+  const isUserAuth = Boolean(studentProfile && isAuthenticated());
 
   return (
     <BrowserRouter>
       <Routes>
+        {/* 1 & 2 & 3. Login Route: Show LoginPage when unauthenticated, redirect to /dashboard when authenticated */}
         <Route
           path="/login"
           element={
@@ -606,6 +607,8 @@ export default function App() {
             )
           }
         />
+
+        {/* 4 & 5. Dashboard Route: Protected by ProtectedRoute */}
         <Route
           path="/dashboard"
           element={
@@ -618,28 +621,12 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        {/* Default route: show /login when unauthenticated, /dashboard when authenticated */}
-        <Route
-          path="/"
-          element={
-            isUserAuth ? (
-              <Navigate to="/dashboard" replace />
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
-        {/* Wildcard catch-all */}
-        <Route
-          path="*"
-          element={
-            isUserAuth ? (
-              <Navigate to="/dashboard" replace />
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
+
+        {/* 1. Root route: Unconditionally redirect "/" to "/login" */}
+        <Route path="/" element={<Navigate to="/login" replace />} />
+
+        {/* Wildcard catch-all: redirect any unknown URL to "/login" */}
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
   );
