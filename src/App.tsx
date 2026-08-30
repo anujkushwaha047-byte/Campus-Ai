@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import {
   Complaint,
   AnalyticsData,
@@ -21,7 +22,9 @@ import { ComplaintDetailsModal } from "./components/ComplaintDetailsModal";
 import { SubmitComplaintModal } from "./components/SubmitComplaintModal";
 import { StudentAuthModal } from "./components/StudentAuthModal";
 import { StudentsManagementView } from "./pages/StudentsManagementView";
-import LandingPageModern from "./components/LandingPageModern";
+import { LoginPage } from "./pages/LoginPage";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import { getStoredAuth, saveStoredAuth, clearStoredAuth, isAuthenticated } from "./utils/auth";
 import { CheckCircle2, AlertCircle, Info, Sparkles } from "lucide-react";
 
 // Default Initial Analytics Data (Matches Reference Dashboard Metrics)
@@ -81,13 +84,18 @@ const initialAnalytics: AnalyticsData = {
   ],
 };
 
-export default function App() {
-  const [userRole, setUserRole] = useState<"admin" | "student">("admin");
-  const [currentTab, setCurrentTab] = useState("dashboard");
+interface DashboardAppProps {
+  studentProfile: StudentProfile | null;
+  onLogout: () => void;
+  onUpdateStudentProfile: (student: StudentProfile) => void;
+}
+
+function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: DashboardAppProps) {
+  const navigate = useNavigate();
+  const [userRole, setUserRole] = useState<"admin" | "student">("student");
+  const [currentTab, setCurrentTab] = useState("student_dashboard");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-
-  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
 
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsData>(initialAnalytics);
@@ -169,12 +177,10 @@ export default function App() {
     setCurrentTab(tab);
   };
 
-  const handleLogout = () => {
-    if (userRole === "student") {
-      setIsAuthModalOpen(true);
-    } else {
-      handleSwitchRole("student");
-    }
+  const handlePerformLogout = () => {
+    onLogout();
+    navigate("/login", { replace: true });
+    showToast("Logged out successfully.", "info");
   };
 
   // Update a complaint (status, comment, officer, priority)
@@ -233,8 +239,12 @@ export default function App() {
   };
 
   // Calculate current dynamic counts
-  const criticalCount = complaints.filter((c) => c.priority === "Critical" && c.status !== "Resolved" && c.status !== "Rejected").length;
-  const pendingCount = complaints.filter((c) => c.status === "Pending" || c.status === "Under Review").length;
+  const criticalCount = complaints.filter(
+    (c) => c.priority === "Critical" && c.status !== "Resolved" && c.status !== "Rejected"
+  ).length;
+  const pendingCount = complaints.filter(
+    (c) => c.status === "Pending" || c.status === "Under Review"
+  ).length;
 
   // Title calculation
   const getHeaderTitle = () => {
@@ -273,21 +283,6 @@ export default function App() {
     }
   };
 
-  // Handle successful login from LandingPage
-  const handleLandingPageLogin = (student: StudentProfile) => {
-    setStudentProfile(student);
-    setUserRole("student");
-    setCurrentTab("student_dashboard");
-    showToast(`Logged in as ${student.name} (${student.rollNumber})`);
-  };
-
-  // Show LandingPage when not authenticated
-  if (!studentProfile) {
-    return (
-      <LandingPageModern onLoginSuccess={handleLandingPageLogin} />
-    );
-  }
-
   return (
     <div className="min-h-screen bg-[#F4F7FB] text-slate-900 flex font-['Plus_Jakarta_Sans',sans-serif]">
       {/* Toast Floating Notification */}
@@ -320,7 +315,7 @@ export default function App() {
         onSelectTab={handleSelectTab}
         userRole={userRole}
         studentProfile={studentProfile}
-        onLogout={handleLogout}
+        onLogout={handlePerformLogout}
         isOpenOnMobile={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
         criticalCount={criticalCount || 20}
@@ -445,7 +440,7 @@ export default function App() {
             <StudentProfileView
               studentProfile={studentProfile}
               complaints={complaints}
-              onLogout={handleLogout}
+              onLogout={handlePerformLogout}
             />
           )}
 
@@ -508,12 +503,59 @@ export default function App() {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         onLoginSuccess={(student) => {
-          setStudentProfile(student);
-          setUserRole("student");
-          setCurrentTab("student_dashboard");
+          onUpdateStudentProfile(student);
           showToast(`Logged in as ${student.name} (${student.rollNumber})`);
         }}
       />
     </div>
+  );
+}
+
+export default function App() {
+  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(() => {
+    const session = getStoredAuth();
+    return session ? session.student : null;
+  });
+
+  const handleLoginSuccess = (student: StudentProfile) => {
+    setStudentProfile(student);
+  };
+
+  const handleLogout = () => {
+    clearStoredAuth();
+    setStudentProfile(null);
+  };
+
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route
+          path="/login"
+          element={
+            isAuthenticated() && studentProfile ? (
+              <Navigate to="/dashboard" replace />
+            ) : (
+              <LoginPage onLoginSuccess={handleLoginSuccess} />
+            )
+          }
+        />
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <DashboardApp
+                studentProfile={studentProfile}
+                onLogout={handleLogout}
+                onUpdateStudentProfile={handleLoginSuccess}
+              />
+            </ProtectedRoute>
+          }
+        />
+        {/* Default route redirect */}
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        {/* Wildcard catch-all */}
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
