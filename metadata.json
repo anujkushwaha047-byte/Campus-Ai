@@ -1,0 +1,6 @@
+{
+  "name": "CampusCare - AI Complaint Management System",
+  "description": "An enterprise-grade AI-powered college and university complaint management system featuring automated priority detection, category classification, dynamic admin analytics, and end-to-end student resolution workflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
