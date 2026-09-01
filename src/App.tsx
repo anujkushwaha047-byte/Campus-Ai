@@ -26,7 +26,6 @@ import { StudentAuthModal } from "./components/StudentAuthModal";
 import { ResolveConfirmationModal } from "./components/ResolveConfirmationModal";
 import { StudentsManagementView } from "./pages/StudentsManagementView";
 import { LoginPage } from "./pages/LoginPage";
-import { AdminLoginPage } from "./pages/AdminLoginPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { getStoredAuth, saveStoredAuth, clearStoredAuth, isAuthenticated, getAuthHeaders } from "./utils/auth";
 import { CheckCircle2, AlertCircle, Info, Sparkles } from "lucide-react";
@@ -285,17 +284,6 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
     showToast("All notifications marked as read.");
   };
-
-const AppRoutes = (
-  <Router>
-    <Switch>
-      <Route path="/admin-login" component={AdminLoginPage} />
-      <Route path="/admin" component={AdminDashboard} />
-      <Route path="/dashboard" component={StudentDashboardView} />
-      {/* Add other routes here if necessary */}
-    </Switch>
-  </Router>
-);
 
   // Calculate current dynamic counts
   const criticalCount = complaints.filter(
@@ -655,15 +643,7 @@ export default function App() {
         {/* 7. Admin Dashboard Route: Protected admin portal */}
         <Route
           path="/admin"
-          element={
-            <ProtectedRoute>
-              <DashboardApp
-                studentProfile={studentProfile}
-                onLogout={handleLogout}
-                onUpdateStudentProfile={handleLoginSuccess}
-              />
-            </ProtectedRoute>
-          }
+          element={<AdminDashboard />}
         />
 
         {/* Wildcard catch-all: redirect any unknown URL to "/login" */}

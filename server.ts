@@ -19,6 +19,11 @@ interface AuthenticatedUser {
   role: UserRole;
   rollNumber?: string;
   name?: string;
+  email?: string;
+  sector?: string;
+  department?: string;
+  year?: string;
+  studentId?: string;
 }
 
 declare global {
@@ -47,31 +52,10 @@ function readAuthToken(req: express.Request): AuthenticatedUser | null {
   try {
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as AuthenticatedUser & { exp?: number };
     if (!parsed.id || !parsed.role || !parsed.exp || parsed.exp < Date.now()) return null;
-    return { id: parsed.id, role: parsed.role, rollNumber: parsed.rollNumber, name: parsed.name };
+    return { id: parsed.id, role: parsed.role, rollNumber: parsed.rollNumber, name: parsed.name, email: parsed.email, sector: parsed.sector, department: parsed.department, year: parsed.year, studentId: parsed.studentId || parsed.id };
   } catch {
     return null;
   }
-}
-
-function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const user = readAuthToken(req);
-  if (!user) return res.status(401).json({ success: false, error: "Authentication is required." });
-  req.user = user;
-  next();
-}
-
-function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  if (!req.user || (req.user.role !== "admin" && req.user.role !== "main_admin" && req.user.role !== "sector_admin")) {
-    return res.status(403).json({ success: false, error: "Admin access required." });
-  }
-  next();
-}
-
-function requireMainAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  if (!req.user || (req.user.role !== "admin" && req.user.role !== "main_admin")) {
-    return res.status(403).json({ success: false, error: "Main admin access required." });
-  }
-  next();
 }
 
 // ==========================================
@@ -305,7 +289,8 @@ interface UserPayload {
   rollNumber?: string; // Optional for admin tokens
   email: string;
   name: string;
-  role: "student" | "admin";
+  role: "student" | "admin" | "sector_admin" | "main_admin";
+  sector?: string;
   exp: number;
 }
 
@@ -398,20 +383,33 @@ function optionalAuth(req: express.Request, res: express.Response, next: express
   next();
 }
 
-// Admin Authorization Middleware: Ensures administrator access
+// Admin Authorization Middleware: Ensures administrator access (main_admin or sector_admin or legacy admin)
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (!req.user) {
     return res.status(401).json({ error: "Authentication required." });
   }
 
+  const role = req.user.role;
   const requestedRole = req.headers["x-user-role"];
-  // If user is authenticated and requested role is admin (or user payload has admin role)
-  if (req.user.role === "admin" || requestedRole === "admin") {
-    req.user.role = "admin";
+  
+  if (role === "main_admin" || role === "sector_admin" || role === "admin" || requestedRole === "admin") {
     return next();
   }
 
   return res.status(403).json({ error: "Access denied. Administrator privileges required." });
+}
+
+// Main Admin Authorization Middleware: Ensures main/super administrator access
+function requireMainAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ error: "Authentication required." });
+  }
+
+  if (req.user.role === "main_admin" || req.user.role === "admin") {
+    return next();
+  }
+
+  return res.status(403).json({ error: "Access denied. Main Administrator privileges required." });
 }
 
 // Simple in-memory IP Rate Limiter for AI endpoints
@@ -487,31 +485,52 @@ function getGeminiClient(): GoogleGenAI | null {
 // ==========================================
 function mapCategoryToSector(category: string, text: string): string {
   const lower = (category + " " + text).toLowerCase();
-  if (lower.includes("wi-fi") || lower.includes("wifi") || lower.includes("internet") || lower.includes("network") || lower.includes("computer") || lower.includes("lab") || lower.includes("it")) {
+  if (lower.includes("wi-fi") || lower.includes("wifi") || lower.includes("internet") || lower.includes("network") || lower.includes("router") || lower.includes("computer lab") || lower.includes("computer") || lower.includes("lab") || lower.includes("it")) {
     return "IT";
   }
-  if (lower.includes("electric") || lower.includes("light") || lower.includes("power") || lower.includes("wire") || lower.includes("socket")) {
+  if (lower.includes("electric") || lower.includes("power") || lower.includes("fan") || lower.includes("light") || lower.includes("switch") || lower.includes("wire") || lower.includes("socket") || lower.includes("wiring")) {
     return "Electrical";
   }
-  if (lower.includes("water") || lower.includes("plumb") || lower.includes("pipe") || lower.includes("leak") || lower.includes("tap")) {
+  if (lower.includes("water") || lower.includes("tap") || lower.includes("pipe") || lower.includes("leak") || lower.includes("bathroom") || lower.includes("washroom") || lower.includes("plumb")) {
     return "Water & Plumbing";
   }
-  if (lower.includes("food") || lower.includes("mess") || lower.includes("canteen") || lower.includes("meal") || lower.includes("snack")) {
-    return "Food/Mess";
+  if (lower.includes("food") || lower.includes("mess") || lower.includes("meal") || lower.includes("kitchen") || lower.includes("canteen") || lower.includes("snack") || lower.includes("hygiene of food")) {
+    return "Mess / Food";
   }
-  if (lower.includes("security") || lower.includes("guard") || lower.includes("gate") || lower.includes("theft") || lower.includes("lock")) {
-    return "Security";
-  }
-  if (lower.includes("clean") || lower.includes("dust") || lower.includes("sweep") || lower.includes("trash") || lower.includes("housekeeping")) {
+  if (lower.includes("clean") || lower.includes("garbage") || lower.includes("dust") || lower.includes("cleanliness") || lower.includes("sweep") || lower.includes("trash") || lower.includes("housekeeping")) {
     return "Housekeeping";
   }
-  if (lower.includes("hostel") || lower.includes("room") || lower.includes("bed") || lower.includes("furniture") || lower.includes("washroom")) {
+  if (lower.includes("hostel room") || lower.includes("room maintenance") || lower.includes("bed") || lower.includes("hostel")) {
     return "Hostel Maintenance";
   }
-  if (lower.includes("fire") || lower.includes("extinguisher") || lower.includes("safety") || lower.includes("smoke") || lower.includes("alarm")) {
+  if (lower.includes("fire") || lower.includes("smoke") || lower.includes("gas leak") || lower.includes("extinguisher") || lower.includes("alarm") || lower.includes("safety hazard") || lower.includes("fire alarm")) {
     return "Fire & Safety";
   }
-  return "Other";
+  if (lower.includes("security") || lower.includes("theft") || lower.includes("unauthorized entry") || lower.includes("guard") || lower.includes("gate") || lower.includes("lock")) {
+    return "Security";
+  }
+  if (lower.includes("classroom") || lower.includes("building") || lower.includes("infrastructure") || lower.includes("facilities") || lower.includes("lift") || lower.includes("elevator")) {
+    return "Facilities / Infrastructure";
+  }
+  if (lower.includes("bus") || lower.includes("transport") || lower.includes("route") || lower.includes("parking")) {
+    return "Transport";
+  }
+  if (lower.includes("sports") || lower.includes("ground") || lower.includes("recreation") || lower.includes("equipment")) {
+    return "Sports";
+  }
+  if (lower.includes("teacher") || lower.includes("faculty") || lower.includes("teaching") || lower.includes("academic")) {
+    return "Academics / Faculty";
+  }
+  if (lower.includes("exam") || lower.includes("admit card") || lower.includes("result") || lower.includes("examination")) {
+    return "Examination";
+  }
+  if (lower.includes("book") || lower.includes("library")) {
+    return "Library";
+  }
+  if (lower.includes("fees") || lower.includes("payment") || lower.includes("account") || lower.includes("finance")) {
+    return "Fees / Accounts";
+  }
+  return "General Administration";
 }
 interface DBAttachment {
   id: string;
@@ -993,10 +1012,29 @@ app.post("/api/auth/verify-otp", (req, res) => {
 });
 
 // ==========================================
-// 3. ADMIN LOGIN (NEW ENDPOINT - EMAIL & PASSWORD)
+// 3. ADMIN LOGIN (EMAIL & PASSWORD)
 // ==========================================
 
-app.post("/api/auth/admin-login", (req, res) => {
+const SECTOR_ADMIN_MAP: Record<string, { name: string; sector: string }> = {
+  "it.admin@college.edu": { name: "IT Admin", sector: "IT" },
+  "electrical.admin@college.edu": { name: "Electrical Admin", sector: "Electrical" },
+  "water.admin@college.edu": { name: "Water & Plumbing Admin", sector: "Water & Plumbing" },
+  "mess.admin@college.edu": { name: "Mess Admin", sector: "Mess / Food" },
+  "housekeeping.admin@college.edu": { name: "Housekeeping Admin", sector: "Housekeeping" },
+  "hostel.admin@college.edu": { name: "Hostel Admin", sector: "Hostel Maintenance" },
+  "fire.admin@college.edu": { name: "Fire & Safety Admin", sector: "Fire & Safety" },
+  "security.admin@college.edu": { name: "Security Admin", sector: "Security" },
+  "facilities.admin@college.edu": { name: "Facilities Admin", sector: "Facilities / Infrastructure" },
+  "transport.admin@college.edu": { name: "Transport Admin", sector: "Transport" },
+  "sports.admin@college.edu": { name: "Sports Admin", sector: "Sports" },
+  "academics.admin@college.edu": { name: "Academics Admin", sector: "Academics / Faculty" },
+  "exam.admin@college.edu": { name: "Examination Admin", sector: "Examination" },
+  "library.admin@college.edu": { name: "Library Admin", sector: "Library" },
+  "fees.admin@college.edu": { name: "Fees & Accounts Admin", sector: "Fees / Accounts" },
+  "general.admin@college.edu": { name: "General Admin", sector: "General Administration" }
+};
+
+const handleAdminLogin = (req: express.Request, res: express.Response) => {
   const { email, password } = req.body;
 
   // Validation
@@ -1014,58 +1052,83 @@ app.post("/api/auth/admin-login", (req, res) => {
 
   const cleanEmail = email.trim().toLowerCase();
 
-  // Verify admin credentials (strict comparison)
-  if (cleanEmail !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
+  let role: "main_admin" | "sector_admin" = "main_admin";
+  let sector: string | undefined = undefined;
+  let name = "Main Administrator";
+
+  if (cleanEmail === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+    role = "main_admin";
+    name = "Main Administrator";
+  } else if (SECTOR_ADMIN_MAP[cleanEmail] && password === ADMIN_PASSWORD) {
+    role = "sector_admin";
+    sector = SECTOR_ADMIN_MAP[cleanEmail].sector;
+    name = SECTOR_ADMIN_MAP[cleanEmail].name;
+  } else {
     console.log(`[AUTH] Failed admin login attempt: ${cleanEmail}`);
     return res.status(401).json({ error: "Invalid admin credentials." });
   }
 
-  // Generate admin authentication token (ROLE: admin)
+  // Generate admin authentication token
   const token = generateAuthToken({
-    studentId: "admin",
+    studentId: `admin-${role}-${sector || 'main'}`,
     rollNumber: "ADMIN",
-    email: ADMIN_EMAIL,
-    role: "admin",
-    name: "Administrator"
+    email: cleanEmail,
+    role,
+    sector,
+    name
   });
 
-  console.log(`[AUTH] Admin authenticated: ${ADMIN_EMAIL}`);
+  console.log(`[AUTH] Admin authenticated: ${cleanEmail} (Role: ${role}, Sector: ${sector || 'ALL'})`);
 
   return res.json({
     success: true,
     token,
-    email: ADMIN_EMAIL,
-    adminId: "admin",
-    message: "Admin authentication successful."
+    email: cleanEmail,
+    role,
+    sector,
+    adminId: `admin-${role}-${sector || 'main'}`,
+    message: `${name} authentication successful.`
   });
-});
+};
+
+app.post("/api/auth/admin-login", handleAdminLogin);
+app.post("/api/admin/login", handleAdminLogin);
 
 // ==========================================
 // 7. COMPLAINTS APIs (PROTECTED)
 // ==========================================
 
-// GET /api/complaints - Privacy Enforced: Students only see their own complaints
+// GET /api/complaints - Privacy Enforced: Students only see their own complaints, Sector Admins see only their sector
 app.get("/api/complaints", optionalAuth, (req, res) => {
-  const { rollNumber, status, priority, category, search } = req.query;
+  const { rollNumber, status, priority, category, sector, search } = req.query;
   const user = req.user;
-  const isRequestedAdmin = req.headers["x-user-role"] === "admin";
+  const isRequestedAdminHeader = req.headers["x-user-role"] === "admin";
+  const userRole = user?.role || (isRequestedAdminHeader ? "admin" : "student");
 
   let results = [...complaints];
 
-  // Privacy Rule: If not admin, restrict strictly to the authenticated student
-  if (!isRequestedAdmin && user) {
-    results = results.filter(
-      c => c.studentRoll.toUpperCase() === user.rollNumber.toUpperCase() || c.studentId === user.studentId
-    );
-  } else if (!isRequestedAdmin && !user) {
-    // Unauthenticated public request cannot browse complaints
-    if (rollNumber) {
-      results = results.filter(c => c.studentRoll.toUpperCase() === (rollNumber as string).toUpperCase());
-    } else {
-      results = [];
+  // Role & Privacy Access Controls
+  if (userRole === "main_admin" || userRole === "admin") {
+    // Main Admin sees all complaints. Optional filter by sector:
+    if (sector && sector !== "All") {
+      results = results.filter(c => c.sector === sector);
     }
-  } else if (isRequestedAdmin && rollNumber) {
+  } else if (userRole === "sector_admin") {
+    // Sector Admin MUST ONLY see complaints for their assigned sector
+    const assignedSector = user?.sector;
+    if (assignedSector) {
+      results = results.filter(c => c.sector === assignedSector);
+    }
+  } else if (user) {
+    // Student ONLY sees their own complaints
+    results = results.filter(
+      c => (user.rollNumber && c.studentRoll.toUpperCase() === user.rollNumber.toUpperCase()) || 
+           (user.studentId && c.studentId === user.studentId)
+    );
+  } else if (rollNumber) {
     results = results.filter(c => c.studentRoll.toUpperCase() === (rollNumber as string).toUpperCase());
+  } else {
+    results = [];
   }
 
   // Filters
@@ -1084,7 +1147,8 @@ app.get("/api/complaints", optionalAuth, (req, res) => {
       c.id.toLowerCase().includes(q) ||
       c.title.toLowerCase().includes(q) ||
       c.description.toLowerCase().includes(q) ||
-      c.category.toLowerCase().includes(q)
+      c.category.toLowerCase().includes(q) ||
+      (c.studentRoll && c.studentRoll.toLowerCase().includes(q))
     );
   }
 
@@ -1093,20 +1157,27 @@ app.get("/api/complaints", optionalAuth, (req, res) => {
   res.json({ complaints: results, total: results.length });
 });
 
-// GET /api/complaints/:id - Privacy Enforced
+// GET /api/complaints/:id - Role & Privacy Authorization Enforced
 app.get("/api/complaints/:id", requireAuth, (req, res) => {
   const complaint = complaints.find(c => c.id === req.params.id);
   if (!complaint) {
     return res.status(404).json({ error: "Complaint not found" });
   }
 
-  const isRequestedAdmin = req.headers["x-user-role"] === "admin" || req.user?.role === "admin";
-  if (!isRequestedAdmin && req.user) {
-    // Verify ownership
-    if (
-      complaint.studentRoll.toUpperCase() !== req.user.rollNumber.toUpperCase() &&
-      complaint.studentId !== req.user.studentId
-    ) {
+  const user = req.user!;
+  const userRole = user.role;
+
+  if (userRole === "main_admin" || userRole === "admin") {
+    // Full access granted
+  } else if (userRole === "sector_admin") {
+    if (complaint.sector !== user.sector) {
+      return res.status(403).json({ error: "Access denied. You can only view complaints assigned to your sector." });
+    }
+  } else {
+    // Student privacy verification
+    const isOwner = (user.rollNumber && complaint.studentRoll.toUpperCase() === user.rollNumber.toUpperCase()) ||
+                    (user.studentId && complaint.studentId === user.studentId);
+    if (!isOwner) {
       return res.status(403).json({ error: "Access denied. You can only view your own complaints." });
     }
   }
@@ -1114,7 +1185,7 @@ app.get("/api/complaints/:id", requireAuth, (req, res) => {
   res.json({ complaint });
 });
 
-// POST /api/complaints - Creates new complaint, attaches verified student identity
+// POST /api/complaints - Creates new complaint, attaches verified student identity & AI sector routing
 app.post("/api/complaints", requireAuth, (req, res) => {
   try {
     const {
@@ -1144,7 +1215,7 @@ app.post("/api/complaints", requireAuth, (req, res) => {
 
     // Attach student identity from verified authenticated session
     const verifiedUser = req.user!;
-    const academic = studentAcademicDirectory[verifiedUser.rollNumber] || {
+    const academic = studentAcademicDirectory[verifiedUser.rollNumber || ""] || {
       name: verifiedUser.name || "Student",
       department: "Engineering & Applied Sciences",
       year: "3rd Year"
@@ -1154,11 +1225,13 @@ app.post("/api/complaints", requireAuth, (req, res) => {
     const newId = `CMP-${nextIdNumber}`;
     const now = new Date().toISOString();
 
+    const detectedSector = req.body.sector || mapCategoryToSector(category || "", `${title.trim()} ${description.trim()}`);
+
     const newComplaint: DBComplaint = {
       id: newId,
-      studentId: verifiedUser.studentId || `STU-${verifiedUser.rollNumber}`,
+      studentId: verifiedUser.studentId || `STU-${verifiedUser.rollNumber || 'UNKNOWN'}`,
       studentName: academic.name,
-      studentRoll: verifiedUser.rollNumber,
+      studentRoll: verifiedUser.rollNumber || "STUDENT",
       studentEmail: verifiedUser.email,
       studentDepartment: academic.department,
       studentYear: academic.year,
@@ -1166,6 +1239,7 @@ app.post("/api/complaints", requireAuth, (req, res) => {
       description: description.trim(),
       category: category || "General / Other",
       subcategory: subcategory ? String(subcategory).slice(0, 100) : undefined,
+      sector: detectedSector,
       priority: priority || "Medium",
       aiReason: aiReason || "Analyzed by CampusCare AI Engine.",
       aiSummary: aiSummary ? String(aiSummary).slice(0, 500) : undefined,
@@ -1173,7 +1247,7 @@ app.post("/api/complaints", requireAuth, (req, res) => {
       riskFlags: Array.isArray(riskFlags) ? riskFlags.slice(0, 10) : [],
       recommendedAction: recommendedAction ? String(recommendedAction).slice(0, 500) : undefined,
       status: "Pending",
-      department: department || `${category || 'General'} Support Department`,
+      department: department || `${detectedSector} Department`,
       location: location ? String(location).slice(0, 150) : "Campus Main Grounds",
       attachments: Array.isArray(attachments) ? attachments.slice(0, 5) : [],
       createdAt: now,
@@ -1191,9 +1265,17 @@ app.post("/api/complaints", requireAuth, (req, res) => {
           id: `tl-${Date.now()}-2`,
           stage: "ai_analyzed",
           title: "AI Analysis Completed",
-          description: `AI determined priority as ${priority || 'Medium'} based on safety and SLA impact.`,
-          timestamp: new Date(Date.now() + 2000).toISOString(),
+          description: `AI determined priority as ${priority || 'Medium'} and assigned to ${detectedSector} sector.`,
+          timestamp: new Date(Date.now() + 1000).toISOString(),
           actor: "CampusCare AI Engine"
+        },
+        {
+          id: `tl-${Date.now()}-3`,
+          stage: "assigned",
+          title: `Routed to ${detectedSector} Sector`,
+          description: `AI auto-routed complaint to ${detectedSector} Sector Admin for resolution.`,
+          timestamp: new Date(Date.now() + 2000).toISOString(),
+          actor: "CampusCare AI Router"
         }
       ],
       comments: [
@@ -1201,7 +1283,7 @@ app.post("/api/complaints", requireAuth, (req, res) => {
           id: `comm-${Date.now()}`,
           author: "CampusCare AI",
           role: "admin",
-          message: `AI Classification Notice: Priority set to ${priority || 'Medium'}.`,
+          message: `AI Classification Notice: Priority set to ${priority || 'Medium'}. Sector: ${detectedSector}.`,
           timestamp: now
         }
       ]
@@ -1300,8 +1382,8 @@ app.patch("/api/complaints/:id/resolve", requireAuth, requireAdmin, (req, res) =
   });
 });
 
-// PATCH /api/complaints/:id - Update Status, Priority, Assignment, or Add Comment
-app.patch("/api/complaints/:id", requireAuth, (req, res) => {
+// Update Complaint Handler (PUT / PATCH)
+const handleUpdateComplaint = (req: express.Request, res: express.Response) => {
   const { id } = req.params;
   const index = complaints.findIndex(c => c.id === id);
 
@@ -1310,19 +1392,28 @@ app.patch("/api/complaints/:id", requireAuth, (req, res) => {
   }
 
   const existing = complaints[index];
-  const { status, priority, department, assignedTo, assignedOfficerRole, overrideNote, newComment, author, role } = req.body;
+  const { status, priority, department, assignedTo, assignedOfficerRole, overrideNote, newComment, author } = req.body;
   const now = new Date().toISOString();
-  const isRequestedAdmin = req.headers["x-user-role"] === "admin" || req.user?.role === "admin";
+  const user = req.user;
+  const userRole = user?.role || (req.headers["x-user-role"] === "admin" ? "admin" : "student");
+  const isAdmin = userRole === "main_admin" || userRole === "sector_admin" || userRole === "admin";
 
-  // If student is updating, only allow adding a comment on their own complaint
-  if (!isRequestedAdmin && req.user) {
-    if (existing.studentRoll.toUpperCase() !== req.user.rollNumber.toUpperCase() && existing.studentId !== req.user.studentId) {
+  // Authorization Check
+  if (userRole === "sector_admin") {
+    if (existing.sector !== user?.sector) {
+      return res.status(403).json({ error: "Access denied. You can only manage complaints assigned to your sector." });
+    }
+  } else if (!isAdmin && user) {
+    // Student: verify ownership
+    const isOwner = (user.rollNumber && existing.studentRoll.toUpperCase() === user.rollNumber.toUpperCase()) ||
+                    (user.studentId && existing.studentId === user.studentId);
+    if (!isOwner) {
       return res.status(403).json({ error: "Access denied." });
     }
   }
 
   // Admin status update
-  if (status && status !== existing.status && isRequestedAdmin) {
+  if (status && status !== existing.status && isAdmin) {
     const stageMap: Record<string, "submitted" | "ai_analyzed" | "under_review" | "assigned" | "in_progress" | "resolved" | "rejected"> = {
       "Pending": "submitted",
       "Under Review": "under_review",
@@ -1340,7 +1431,7 @@ app.patch("/api/complaints/:id", requireAuth, (req, res) => {
       title: `Status Changed to ${status}`,
       description: overrideNote ? String(overrideNote).slice(0, 300) : `Status updated to ${status} by administrator.`,
       timestamp: now,
-      actor: author || "Super Administrator"
+      actor: author || user?.name || "Administrator"
     });
 
     notifications.unshift({
@@ -1357,7 +1448,7 @@ app.patch("/api/complaints/:id", requireAuth, (req, res) => {
   }
 
   // Admin Priority Update
-  if (priority && priority !== existing.priority && isRequestedAdmin) {
+  if (priority && priority !== existing.priority && isAdmin) {
     existing.isOverriddenByAdmin = true;
     existing.overrideNote = overrideNote ? String(overrideNote).slice(0, 300) : `Priority updated from ${existing.priority} to ${priority}.`;
     existing.priority = priority;
@@ -1368,12 +1459,12 @@ app.patch("/api/complaints/:id", requireAuth, (req, res) => {
       title: `Priority Updated to ${priority}`,
       description: existing.overrideNote,
       timestamp: now,
-      actor: author || "Super Administrator"
+      actor: author || user?.name || "Administrator"
     });
   }
 
-  if (department && isRequestedAdmin) existing.department = String(department).slice(0, 100);
-  if (assignedTo && isRequestedAdmin) {
+  if (department && isAdmin) existing.department = String(department).slice(0, 100);
+  if (assignedTo && isAdmin) {
     existing.assignedTo = String(assignedTo).slice(0, 100);
     existing.assignedOfficerRole = assignedOfficerRole ? String(assignedOfficerRole).slice(0, 100) : "Department Officer";
     existing.timeline.push({
@@ -1382,7 +1473,7 @@ app.patch("/api/complaints/:id", requireAuth, (req, res) => {
       title: `Assigned to ${existing.assignedTo}`,
       description: `Task assigned to ${existing.assignedTo} (${existing.assignedOfficerRole})`,
       timestamp: now,
-      actor: author || "Super Administrator"
+      actor: author || user?.name || "Administrator"
     });
   }
 
@@ -1391,8 +1482,8 @@ app.patch("/api/complaints/:id", requireAuth, (req, res) => {
     const cleanComment = newComment.trim().slice(0, 1000);
     existing.comments.push({
       id: `comm-${Date.now()}`,
-      author: author || (req.user?.name || "User"),
-      role: isRequestedAdmin ? "admin" : "student",
+      author: author || user?.name || "User",
+      role: isAdmin ? "admin" : "student",
       message: cleanComment,
       timestamp: now
     });
@@ -1403,7 +1494,13 @@ app.patch("/api/complaints/:id", requireAuth, (req, res) => {
   saveComplaints();
 
   res.json({ success: true, complaint: existing });
-});
+};
+
+// PATCH /api/complaints/:id - Update Status, Priority, Assignment, or Add Comment
+app.patch("/api/complaints/:id", requireAuth, handleUpdateComplaint);
+
+// PUT /api/complaints/:id - Update Status, Priority, Assignment, or Add Comment
+app.put("/api/complaints/:id", requireAuth, handleUpdateComplaint);
 
 // ==========================================
 // 8. ADMIN DIRECTORY & ANALYTICS APIs
@@ -1456,299 +1553,8 @@ app.get("/api/admin/students", requireAuth, requireAdmin, (req, res) => {
   }
 });
 
-// 5. Complaints Endpoints
-app.get("/api/complaints", requireAuth, async (req, res) => {
-  const { rollNumber, status, priority, category, department, date, search } = req.query;
-  let results = await readComplaintsForUser(req.user!);
-
-  if (rollNumber) {
-    results = results.filter(c => c.studentRoll.toUpperCase() === (rollNumber as string).toUpperCase());
-  }
-
-  if (status && status !== "All") {
-    results = results.filter(c => c.status === status);
-  }
-
-  if (priority && priority !== "All") {
-    results = results.filter(c => c.priority === priority);
-  }
-
-  if (category && category !== "All") {
-    results = results.filter(c => c.category === category);
-  }
-
-  if (department && department !== "All") {
-    results = results.filter(c => c.department === department);
-  }
-
-  if (date) {
-    results = results.filter(c => c.createdAt.startsWith(date as string));
-  }
-
-  if (search) {
-    const q = (search as string).toLowerCase();
-    results = results.filter(c => 
-      c.id.toLowerCase().includes(q) ||
-      c.studentName.toLowerCase().includes(q) ||
-      c.studentRoll.toLowerCase().includes(q) ||
-      c.title.toLowerCase().includes(q) ||
-      c.description.toLowerCase().includes(q) ||
-      c.category.toLowerCase().includes(q)
-    );
-  }
-
-  // Sort by latest first
-  results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-  const total = results.length;
-  const page = Math.max(1, Number(req.query.page) || 1);
-  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
-  const start = (page - 1) * limit;
-  res.json({ complaints: results.slice(start, start + limit), total, page, limit, totalPages: Math.ceil(total / limit) });
-});
-
-app.get("/api/complaints/:id", requireAuth, async (req, res) => {
-  const complaint = await readComplaintForUser(req.params.id, req.user!);
-  if (!complaint) {
-    return res.status(404).json({ success: false, error: "Complaint not found" });
-  }
-  res.json({ complaint });
-});
-
-app.get("/api/complaints/:id/comments", requireAuth, async (req, res) => {
-  const complaint = await readComplaintForUser(req.params.id, req.user!);
-  if (!complaint) return res.status(404).json({ success: false, error: "Complaint not found" });
-  res.json({ comments: complaint.comments || [] });
-});
-
-app.post("/api/complaints/:id/comments", requireAuth, async (req, res) => {
-  const complaint = await readComplaintForUser(req.params.id, req.user!);
-  if (!complaint) return res.status(404).json({ success: false, error: "Complaint not found" });
-  const message = typeof req.body.message === "string" ? req.body.message.trim() : "";
-  if (!message) return res.status(400).json({ success: false, error: "Comment message is required." });
-  const comment: DBComment = {
-    id: `comm-${Date.now()}`,
-    author: req.user?.name || (req.user?.role === "student" ? complaint.studentName : "Administrator"),
-    role: req.user?.role === "student" ? "student" : req.user?.role === "warden" ? "officer" : "admin",
-    message,
-    timestamp: new Date().toISOString()
-  };
-  complaint.comments = [...(complaint.comments || []), comment];
-  const index = complaints.findIndex(item => item.id === complaint.id);
-  if (index >= 0) complaints[index] = complaint;
-  await persistComplaint(complaint);
-  res.status(201).json({ success: true, comment, complaint });
-});
-
-app.post("/api/complaints", requireAuth, async (req, res) => {
-  // Only students can submit complaints
-  if (req.user?.role !== "student") {
-    return res.status(403).json({ success: false, error: "Only students can submit complaints." });
-  }
-
-  try {
-    const {
-      studentName,
-      studentRoll,
-      studentEmail,
-      studentDepartment,
-      studentYear,
-      course,
-      title,
-      description,
-      category,
-      priority,
-      aiReason,
-      aiConfidence,
-      location,
-      department,
-      attachments
-    } = req.body;
-
-    if (!title || !description) {
-      return res.status(400).json({ error: "Title and description are required." });
-    }
-
-    const nextIdNumber = complaints.length + 109;
-    const newId = `CMP-${nextIdNumber}`;
-    const now = new Date().toISOString();
-
-    const newComplaint: DBComplaint = {
-      id: newId,
-      studentId: req.user!.id,
-      studentName: studentName || req.user!.name || "Student",
-      studentRoll: studentRoll || req.user!.rollNumber || "2024CS001",
-      studentEmail: studentEmail || req.user!.email || "student@campus.edu",
-      studentDepartment: studentDepartment || req.user!.department || "Computer Science",
-      studentYear: studentYear || req.user!.year || "3rd Year",
-      title,
-      description,
-      category: category || "Other",
-      sector: mapCategoryToSector(category || "Other", `${title} ${description}`),
-      priority: priority || "Medium",
-      aiReason: aiReason || "Analyzed by CampusCare AI Engine.",
-      aiConfidence: aiConfidence || 95,
-      status: "Pending",
-      department: getOfficialComplaintDepartment(category, course),
-      location: location || "Campus Main Grounds",
-      attachments: attachments || [],
-      createdAt: now,
-      updatedAt: now,
-      timeline: [
-        {
-          id: `tl-${Date.now()}-1`,
-          stage: "submitted",
-          title: "Complaint Submitted",
-          description: "Lodged securely by student via student portal.",
-          timestamp: now,
-          actor: studentName || req.user!.name || "Student"
-        },
-        {
-          id: `tl-${Date.now()}-2`,
-          stage: "ai_analyzed",
-          title: "AI Analysis Completed",
-          description: `AI determined category as ${category} and priority as ${priority}.`,
-          timestamp: new Date(Date.now() + 3000).toISOString(),
-          actor: "CampusCare AI Engine"
-        }
-      ],
-      comments: [],
-      commentsCount: 0
-    };
-
-    complaints.push(newComplaint);
-    await persistComplaint(newComplaint);
-    res.status(201).json({ success: true, complaint: newComplaint });
-  } catch (err) {
-    console.error("Error creating complaint:", err);
-    res.status(500).json({ success: false, error: "Failed to create complaint." });
-  }
-});
-
-// Update Complaint Status, Priority, Assignment, or Add Comment
-app.patch("/api/complaints/:id", requireAuth, async (req, res) => {
-  const { id } = req.params;
-  const index = complaints.findIndex(c => c.id === id);
-
-  const existing = await readComplaintForUser(id, req.user!);
-  if (!existing || (index === -1 && !database)) {
-    return res.status(404).json({ success: false, error: "Complaint not found" });
-  }
-  const { status, priority, department, assignedTo, assignedOfficerRole, overrideNote, newComment } = req.body;
-  const isStudentOwner = req.user?.role === "student" && (existing.studentId === req.user.id || existing.studentRoll.toUpperCase() === req.user.rollNumber?.toUpperCase());
-  const isAssignedWarden = req.user?.role === "warden" && (existing.assignedTo === req.user.id || existing.assignedTo === req.user.name);
-  if (req.user?.role === "student" && !isStudentOwner) return res.status(403).json({ success: false, error: "You can only update your own complaints." });
-  if (req.user?.role === "warden" && !isAssignedWarden) return res.status(403).json({ success: false, error: "You can only update complaints assigned to you." });
-  if (req.user?.role === "student" && (status || priority || department || assignedTo || assignedOfficerRole)) return res.status(403).json({ success: false, error: "Students may only add comments to complaints." });
-  if (req.user?.role === "warden" && (priority || department || assignedTo || assignedOfficerRole)) return res.status(403).json({ success: false, error: "Wardens may update status and comments on assigned complaints." });
-  const effectiveAuthor = req.user?.name || (req.user?.role === "student" ? existing.studentName : "Administrator");
-  const effectiveRole = req.user?.role === "student" ? "student" : req.user?.role === "warden" ? "officer" : "admin";
-  const now = new Date().toISOString();
-
-  // Status Change
-  if (status && status !== existing.status) {
-    const stageMap: Record<string, "submitted" | "ai_analyzed" | "under_review" | "assigned" | "in_progress" | "resolved" | "rejected"> = {
-      "Pending": "submitted",
-      "Under Review": "under_review",
-      "In Progress": "in_progress",
-      "Resolved": "resolved",
-      "Rejected": "rejected"
-    };
-
-    existing.status = status;
-    if (status === "Resolved") {
-      existing.resolvedAt = now;
-    }
-
-    existing.timeline.push({
-      id: `tl-${Date.now()}`,
-      stage: stageMap[status] || "in_progress",
-      title: `Status Changed to ${status}`,
-      description: overrideNote || `Status updated to ${status} by administrator.`,
-      timestamp: now,
-      actor: effectiveAuthor
-    });
-
-    notifications.unshift({
-      id: `notif-${Date.now()}`,
-      recipientType: "student",
-      recipientId: existing.studentId,
-      complaintId: existing.id,
-      title: `Complaint Status Updated: ${status}`,
-      message: `Your complaint ${existing.id} is now ${status}.`,
-      timestamp: now,
-      read: false,
-      type: status === "Resolved" ? "resolved" : "status"
-    });
-    persistNotification(notifications[0]);
-  }
-
-  // Priority Change / Override
-  if (priority && priority !== existing.priority) {
-    existing.isOverriddenByAdmin = true;
-    existing.overrideNote = overrideNote || `Priority manually updated from ${existing.priority} to ${priority} by administrator.`;
-    existing.priority = priority;
-
-    existing.timeline.push({
-      id: `tl-${Date.now()}-p`,
-      stage: "under_review",
-      title: `Priority Updated to ${priority}`,
-      description: existing.overrideNote,
-      timestamp: now,
-      actor: effectiveAuthor
-    });
-  }
-
-  // Department / Assignment Change
-  if (department) existing.department = department;
-  if (assignedTo) {
-    existing.assignedTo = assignedTo;
-    existing.assignedOfficerRole = assignedOfficerRole || "Department Officer";
-    existing.timeline.push({
-      id: `tl-${Date.now()}-a`,
-      stage: "assigned",
-      title: `Assigned to ${assignedTo}`,
-      description: `Task assigned to ${assignedTo} (${existing.assignedOfficerRole})`,
-      timestamp: now,
-      actor: effectiveAuthor
-    });
-  }
-
-  // Add Comment
-  if (newComment) {
-    existing.comments.push({
-      id: `comm-${Date.now()}`,
-      author: effectiveAuthor,
-      role: effectiveRole,
-      message: newComment,
-      timestamp: now
-    });
-
-    if (effectiveRole === "admin" || effectiveRole === "officer") {
-      notifications.unshift({
-        id: `notif-${Date.now()}-c`,
-        recipientType: "student",
-        recipientId: existing.studentId,
-        complaintId: existing.id,
-        title: "New Note on Your Complaint",
-        message: `${effectiveAuthor}: "${newComment.slice(0, 60)}..."`,
-        timestamp: now,
-        read: false,
-        type: "comment"
-      });
-      persistNotification(notifications[0]);
-    }
-  }
-
-  existing.updatedAt = now;
-  if (index >= 0) complaints[index] = existing;
-  void persistComplaint(existing).catch(error => console.error("Failed to persist complaint update:", error instanceof Error ? error.message : "database error"));
-
-  res.json({ success: true, complaint: existing });
-});
-
 // 6. Analytics Aggregate Endpoint (matching exact numbers in reference UI: 245 total, 28 pending, 197 resolved, 20 critical)
-app.get("/api/analytics", requireAuth, requireRole("admin", "warden"), (req, res) => {
+app.get("/api/analytics", requireAuth, requireAdmin, (req, res) => {
   const total = complaints.length;
   const pending = complaints.filter(c => c.status === "Pending" || c.status === "Under Review").length;
   const resolved = complaints.filter(c => c.status === "Resolved").length;

@@ -30,12 +30,19 @@ export type Sector =
   | 'IT'
   | 'Electrical'
   | 'Water & Plumbing'
-  | 'Food/Mess'
-  | 'Security'
+  | 'Mess / Food'
   | 'Housekeeping'
   | 'Hostel Maintenance'
   | 'Fire & Safety'
-  | 'Other';
+  | 'Security'
+  | 'Facilities / Infrastructure'
+  | 'Transport'
+  | 'Sports'
+  | 'Academics / Faculty'
+  | 'Examination'
+  | 'Library'
+  | 'Fees / Accounts'
+  | 'General Administration';
 
 export type Priority = 'Critical' | 'High' | 'Medium' | 'Low';
 
@@ -74,19 +81,6 @@ export interface Attachment {
   dataUrl?: string;
 }
 
-export type Sector = 
-  | 'IT'
-  | 'Electrical'
-  | 'Water & Plumbing'
-  | 'Food/Mess'
-  | 'Security'
-  | 'Housekeeping'
-  | 'Hostel Maintenance'
-  | 'Fire & Safety'
-  | 'Other';
-
-export type UserRole = 'student' | 'sector_admin' | 'main_admin';
-
 export interface Complaint {
   id: string;
   studentId: string;
@@ -110,6 +104,9 @@ export interface Complaint {
   sector: Sector;
   assignedTo?: string;
   assignedOfficerRole?: string;
+  assignedAdminId?: string;
+  assignedAdminName?: string;
+  assignedAt?: string;
   location?: string;
   attachments?: Attachment[];
   createdAt: string;
