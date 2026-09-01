@@ -298,6 +298,12 @@ export const StudentLoginPage: React.FC<StudentLoginPageProps> = ({
                 <span className="px-2.5 py-1 rounded-full bg-blue-50 text-[#146EF5] font-bold text-[11px] uppercase tracking-wider">
                   {step === "details" ? "Step 1 of 2: Details" : step === "otp" ? "Step 2 of 2: OTP" : "Authenticated"}
                 </span>
+                <a
+                  href="/admin-login"
+                  className="text-xs font-semibold text-slate-500 hover:text-[#146EF5] transition-colors ml-2"
+                >
+                  Admin Login
+                </a>
               </div>
 
               {onCancel && (

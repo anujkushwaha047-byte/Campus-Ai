@@ -26,6 +26,17 @@ export type Category =
   | 'Fees'
   | 'Other';
 
+export type Sector = 
+  | 'IT'
+  | 'Electrical'
+  | 'Water & Plumbing'
+  | 'Food/Mess'
+  | 'Security'
+  | 'Housekeeping'
+  | 'Hostel Maintenance'
+  | 'Fire & Safety'
+  | 'Other';
+
 export type Priority = 'Critical' | 'High' | 'Medium' | 'Low';
 
 export type ComplaintStatus = 
@@ -34,6 +45,8 @@ export type ComplaintStatus =
   | 'In Progress'
   | 'Resolved'
   | 'Rejected';
+
+export type UserRole = 'student' | 'sector_admin' | 'main_admin';
 
 export interface TimelineItem {
   id: string;
@@ -61,6 +74,19 @@ export interface Attachment {
   dataUrl?: string;
 }
 
+export type Sector = 
+  | 'IT'
+  | 'Electrical'
+  | 'Water & Plumbing'
+  | 'Food/Mess'
+  | 'Security'
+  | 'Housekeeping'
+  | 'Hostel Maintenance'
+  | 'Fire & Safety'
+  | 'Other';
+
+export type UserRole = 'student' | 'sector_admin' | 'main_admin';
+
 export interface Complaint {
   id: string;
   studentId: string;
@@ -81,6 +107,7 @@ export interface Complaint {
   recommendedAction?: string;
   status: ComplaintStatus;
   department: string;
+  sector: Sector;
   assignedTo?: string;
   assignedOfficerRole?: string;
   location?: string;

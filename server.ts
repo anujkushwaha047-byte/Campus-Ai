@@ -13,6 +13,67 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const AUTH_SECRET = process.env.AUTH_SECRET || "campuscare_auth_secret_jwt_key_2026";
 const IS_DEMO_MODE = process.env.DEMO_MODE !== "false";
 
+type UserRole = "student" | "warden" | "admin" | "sector_admin" | "main_admin";
+interface AuthenticatedUser {
+  id: string;
+  role: UserRole;
+  rollNumber?: string;
+  name?: string;
+}
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: AuthenticatedUser;
+    }
+  }
+}
+
+function createAuthToken(user: AuthenticatedUser): string {
+  const payload = Buffer.from(JSON.stringify({ ...user, exp: Date.now() + 8 * 60 * 60 * 1000 })).toString("base64url");
+  const signature = crypto.createHmac("sha256", AUTH_SECRET).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function readAuthToken(req: express.Request): AuthenticatedUser | null {
+  if (!AUTH_SECRET) return null;
+  const header = req.header("authorization");
+  if (!header?.startsWith("Bearer ")) return null;
+  const token = header.slice(7);
+  const [payload, signature] = token.split(".");
+  if (!payload || !signature) return null;
+  const expected = crypto.createHmac("sha256", AUTH_SECRET).update(payload).digest("base64url");
+  if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as AuthenticatedUser & { exp?: number };
+    if (!parsed.id || !parsed.role || !parsed.exp || parsed.exp < Date.now()) return null;
+    return { id: parsed.id, role: parsed.role, rollNumber: parsed.rollNumber, name: parsed.name };
+  } catch {
+    return null;
+  }
+}
+
+function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const user = readAuthToken(req);
+  if (!user) return res.status(401).json({ success: false, error: "Authentication is required." });
+  req.user = user;
+  next();
+}
+
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!req.user || (req.user.role !== "admin" && req.user.role !== "main_admin" && req.user.role !== "sector_admin")) {
+    return res.status(403).json({ success: false, error: "Admin access required." });
+  }
+  next();
+}
+
+function requireMainAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!req.user || (req.user.role !== "admin" && req.user.role !== "main_admin")) {
+    return res.status(403).json({ success: false, error: "Main admin access required." });
+  }
+  next();
+}
+
 // ==========================================
 // 1. SECURITY & PARSING MIDDLEWARES
 // ==========================================
@@ -424,6 +485,34 @@ function getGeminiClient(): GoogleGenAI | null {
 // ==========================================
 // 5. COMPLAINT & NOTIFICATION MODELS
 // ==========================================
+function mapCategoryToSector(category: string, text: string): string {
+  const lower = (category + " " + text).toLowerCase();
+  if (lower.includes("wi-fi") || lower.includes("wifi") || lower.includes("internet") || lower.includes("network") || lower.includes("computer") || lower.includes("lab") || lower.includes("it")) {
+    return "IT";
+  }
+  if (lower.includes("electric") || lower.includes("light") || lower.includes("power") || lower.includes("wire") || lower.includes("socket")) {
+    return "Electrical";
+  }
+  if (lower.includes("water") || lower.includes("plumb") || lower.includes("pipe") || lower.includes("leak") || lower.includes("tap")) {
+    return "Water & Plumbing";
+  }
+  if (lower.includes("food") || lower.includes("mess") || lower.includes("canteen") || lower.includes("meal") || lower.includes("snack")) {
+    return "Food/Mess";
+  }
+  if (lower.includes("security") || lower.includes("guard") || lower.includes("gate") || lower.includes("theft") || lower.includes("lock")) {
+    return "Security";
+  }
+  if (lower.includes("clean") || lower.includes("dust") || lower.includes("sweep") || lower.includes("trash") || lower.includes("housekeeping")) {
+    return "Housekeeping";
+  }
+  if (lower.includes("hostel") || lower.includes("room") || lower.includes("bed") || lower.includes("furniture") || lower.includes("washroom")) {
+    return "Hostel Maintenance";
+  }
+  if (lower.includes("fire") || lower.includes("extinguisher") || lower.includes("safety") || lower.includes("smoke") || lower.includes("alarm")) {
+    return "Fire & Safety";
+  }
+  return "Other";
+}
 interface DBAttachment {
   id: string;
   name: string;
@@ -470,6 +559,7 @@ interface DBComplaint {
   recommendedAction?: string;
   status: "Pending" | "Under Review" | "In Progress" | "Resolved" | "Rejected";
   department: string;
+  sector?: string;
   assignedTo?: string;
   assignedOfficerRole?: string;
   location?: string;
@@ -1366,8 +1456,299 @@ app.get("/api/admin/students", requireAuth, requireAdmin, (req, res) => {
   }
 });
 
-// GET /api/analytics
-app.get("/api/analytics", optionalAuth, (req, res) => {
+// 5. Complaints Endpoints
+app.get("/api/complaints", requireAuth, async (req, res) => {
+  const { rollNumber, status, priority, category, department, date, search } = req.query;
+  let results = await readComplaintsForUser(req.user!);
+
+  if (rollNumber) {
+    results = results.filter(c => c.studentRoll.toUpperCase() === (rollNumber as string).toUpperCase());
+  }
+
+  if (status && status !== "All") {
+    results = results.filter(c => c.status === status);
+  }
+
+  if (priority && priority !== "All") {
+    results = results.filter(c => c.priority === priority);
+  }
+
+  if (category && category !== "All") {
+    results = results.filter(c => c.category === category);
+  }
+
+  if (department && department !== "All") {
+    results = results.filter(c => c.department === department);
+  }
+
+  if (date) {
+    results = results.filter(c => c.createdAt.startsWith(date as string));
+  }
+
+  if (search) {
+    const q = (search as string).toLowerCase();
+    results = results.filter(c => 
+      c.id.toLowerCase().includes(q) ||
+      c.studentName.toLowerCase().includes(q) ||
+      c.studentRoll.toLowerCase().includes(q) ||
+      c.title.toLowerCase().includes(q) ||
+      c.description.toLowerCase().includes(q) ||
+      c.category.toLowerCase().includes(q)
+    );
+  }
+
+  // Sort by latest first
+  results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const total = results.length;
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+  const start = (page - 1) * limit;
+  res.json({ complaints: results.slice(start, start + limit), total, page, limit, totalPages: Math.ceil(total / limit) });
+});
+
+app.get("/api/complaints/:id", requireAuth, async (req, res) => {
+  const complaint = await readComplaintForUser(req.params.id, req.user!);
+  if (!complaint) {
+    return res.status(404).json({ success: false, error: "Complaint not found" });
+  }
+  res.json({ complaint });
+});
+
+app.get("/api/complaints/:id/comments", requireAuth, async (req, res) => {
+  const complaint = await readComplaintForUser(req.params.id, req.user!);
+  if (!complaint) return res.status(404).json({ success: false, error: "Complaint not found" });
+  res.json({ comments: complaint.comments || [] });
+});
+
+app.post("/api/complaints/:id/comments", requireAuth, async (req, res) => {
+  const complaint = await readComplaintForUser(req.params.id, req.user!);
+  if (!complaint) return res.status(404).json({ success: false, error: "Complaint not found" });
+  const message = typeof req.body.message === "string" ? req.body.message.trim() : "";
+  if (!message) return res.status(400).json({ success: false, error: "Comment message is required." });
+  const comment: DBComment = {
+    id: `comm-${Date.now()}`,
+    author: req.user?.name || (req.user?.role === "student" ? complaint.studentName : "Administrator"),
+    role: req.user?.role === "student" ? "student" : req.user?.role === "warden" ? "officer" : "admin",
+    message,
+    timestamp: new Date().toISOString()
+  };
+  complaint.comments = [...(complaint.comments || []), comment];
+  const index = complaints.findIndex(item => item.id === complaint.id);
+  if (index >= 0) complaints[index] = complaint;
+  await persistComplaint(complaint);
+  res.status(201).json({ success: true, comment, complaint });
+});
+
+app.post("/api/complaints", requireAuth, async (req, res) => {
+  // Only students can submit complaints
+  if (req.user?.role !== "student") {
+    return res.status(403).json({ success: false, error: "Only students can submit complaints." });
+  }
+
+  try {
+    const {
+      studentName,
+      studentRoll,
+      studentEmail,
+      studentDepartment,
+      studentYear,
+      course,
+      title,
+      description,
+      category,
+      priority,
+      aiReason,
+      aiConfidence,
+      location,
+      department,
+      attachments
+    } = req.body;
+
+    if (!title || !description) {
+      return res.status(400).json({ error: "Title and description are required." });
+    }
+
+    const nextIdNumber = complaints.length + 109;
+    const newId = `CMP-${nextIdNumber}`;
+    const now = new Date().toISOString();
+
+    const newComplaint: DBComplaint = {
+      id: newId,
+      studentId: req.user!.id,
+      studentName: studentName || req.user!.name || "Student",
+      studentRoll: studentRoll || req.user!.rollNumber || "2024CS001",
+      studentEmail: studentEmail || req.user!.email || "student@campus.edu",
+      studentDepartment: studentDepartment || req.user!.department || "Computer Science",
+      studentYear: studentYear || req.user!.year || "3rd Year",
+      title,
+      description,
+      category: category || "Other",
+      sector: mapCategoryToSector(category || "Other", `${title} ${description}`),
+      priority: priority || "Medium",
+      aiReason: aiReason || "Analyzed by CampusCare AI Engine.",
+      aiConfidence: aiConfidence || 95,
+      status: "Pending",
+      department: getOfficialComplaintDepartment(category, course),
+      location: location || "Campus Main Grounds",
+      attachments: attachments || [],
+      createdAt: now,
+      updatedAt: now,
+      timeline: [
+        {
+          id: `tl-${Date.now()}-1`,
+          stage: "submitted",
+          title: "Complaint Submitted",
+          description: "Lodged securely by student via student portal.",
+          timestamp: now,
+          actor: studentName || req.user!.name || "Student"
+        },
+        {
+          id: `tl-${Date.now()}-2`,
+          stage: "ai_analyzed",
+          title: "AI Analysis Completed",
+          description: `AI determined category as ${category} and priority as ${priority}.`,
+          timestamp: new Date(Date.now() + 3000).toISOString(),
+          actor: "CampusCare AI Engine"
+        }
+      ],
+      comments: [],
+      commentsCount: 0
+    };
+
+    complaints.push(newComplaint);
+    await persistComplaint(newComplaint);
+    res.status(201).json({ success: true, complaint: newComplaint });
+  } catch (err) {
+    console.error("Error creating complaint:", err);
+    res.status(500).json({ success: false, error: "Failed to create complaint." });
+  }
+});
+
+// Update Complaint Status, Priority, Assignment, or Add Comment
+app.patch("/api/complaints/:id", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const index = complaints.findIndex(c => c.id === id);
+
+  const existing = await readComplaintForUser(id, req.user!);
+  if (!existing || (index === -1 && !database)) {
+    return res.status(404).json({ success: false, error: "Complaint not found" });
+  }
+  const { status, priority, department, assignedTo, assignedOfficerRole, overrideNote, newComment } = req.body;
+  const isStudentOwner = req.user?.role === "student" && (existing.studentId === req.user.id || existing.studentRoll.toUpperCase() === req.user.rollNumber?.toUpperCase());
+  const isAssignedWarden = req.user?.role === "warden" && (existing.assignedTo === req.user.id || existing.assignedTo === req.user.name);
+  if (req.user?.role === "student" && !isStudentOwner) return res.status(403).json({ success: false, error: "You can only update your own complaints." });
+  if (req.user?.role === "warden" && !isAssignedWarden) return res.status(403).json({ success: false, error: "You can only update complaints assigned to you." });
+  if (req.user?.role === "student" && (status || priority || department || assignedTo || assignedOfficerRole)) return res.status(403).json({ success: false, error: "Students may only add comments to complaints." });
+  if (req.user?.role === "warden" && (priority || department || assignedTo || assignedOfficerRole)) return res.status(403).json({ success: false, error: "Wardens may update status and comments on assigned complaints." });
+  const effectiveAuthor = req.user?.name || (req.user?.role === "student" ? existing.studentName : "Administrator");
+  const effectiveRole = req.user?.role === "student" ? "student" : req.user?.role === "warden" ? "officer" : "admin";
+  const now = new Date().toISOString();
+
+  // Status Change
+  if (status && status !== existing.status) {
+    const stageMap: Record<string, "submitted" | "ai_analyzed" | "under_review" | "assigned" | "in_progress" | "resolved" | "rejected"> = {
+      "Pending": "submitted",
+      "Under Review": "under_review",
+      "In Progress": "in_progress",
+      "Resolved": "resolved",
+      "Rejected": "rejected"
+    };
+
+    existing.status = status;
+    if (status === "Resolved") {
+      existing.resolvedAt = now;
+    }
+
+    existing.timeline.push({
+      id: `tl-${Date.now()}`,
+      stage: stageMap[status] || "in_progress",
+      title: `Status Changed to ${status}`,
+      description: overrideNote || `Status updated to ${status} by administrator.`,
+      timestamp: now,
+      actor: effectiveAuthor
+    });
+
+    notifications.unshift({
+      id: `notif-${Date.now()}`,
+      recipientType: "student",
+      recipientId: existing.studentId,
+      complaintId: existing.id,
+      title: `Complaint Status Updated: ${status}`,
+      message: `Your complaint ${existing.id} is now ${status}.`,
+      timestamp: now,
+      read: false,
+      type: status === "Resolved" ? "resolved" : "status"
+    });
+    persistNotification(notifications[0]);
+  }
+
+  // Priority Change / Override
+  if (priority && priority !== existing.priority) {
+    existing.isOverriddenByAdmin = true;
+    existing.overrideNote = overrideNote || `Priority manually updated from ${existing.priority} to ${priority} by administrator.`;
+    existing.priority = priority;
+
+    existing.timeline.push({
+      id: `tl-${Date.now()}-p`,
+      stage: "under_review",
+      title: `Priority Updated to ${priority}`,
+      description: existing.overrideNote,
+      timestamp: now,
+      actor: effectiveAuthor
+    });
+  }
+
+  // Department / Assignment Change
+  if (department) existing.department = department;
+  if (assignedTo) {
+    existing.assignedTo = assignedTo;
+    existing.assignedOfficerRole = assignedOfficerRole || "Department Officer";
+    existing.timeline.push({
+      id: `tl-${Date.now()}-a`,
+      stage: "assigned",
+      title: `Assigned to ${assignedTo}`,
+      description: `Task assigned to ${assignedTo} (${existing.assignedOfficerRole})`,
+      timestamp: now,
+      actor: effectiveAuthor
+    });
+  }
+
+  // Add Comment
+  if (newComment) {
+    existing.comments.push({
+      id: `comm-${Date.now()}`,
+      author: effectiveAuthor,
+      role: effectiveRole,
+      message: newComment,
+      timestamp: now
+    });
+
+    if (effectiveRole === "admin" || effectiveRole === "officer") {
+      notifications.unshift({
+        id: `notif-${Date.now()}-c`,
+        recipientType: "student",
+        recipientId: existing.studentId,
+        complaintId: existing.id,
+        title: "New Note on Your Complaint",
+        message: `${effectiveAuthor}: "${newComment.slice(0, 60)}..."`,
+        timestamp: now,
+        read: false,
+        type: "comment"
+      });
+      persistNotification(notifications[0]);
+    }
+  }
+
+  existing.updatedAt = now;
+  if (index >= 0) complaints[index] = existing;
+  void persistComplaint(existing).catch(error => console.error("Failed to persist complaint update:", error instanceof Error ? error.message : "database error"));
+
+  res.json({ success: true, complaint: existing });
+});
+
+// 6. Analytics Aggregate Endpoint (matching exact numbers in reference UI: 245 total, 28 pending, 197 resolved, 20 critical)
+app.get("/api/analytics", requireAuth, requireRole("admin", "warden"), (req, res) => {
   const total = complaints.length;
   const pending = complaints.filter(c => c.status === "Pending" || c.status === "Under Review").length;
   const resolved = complaints.filter(c => c.status === "Resolved").length;

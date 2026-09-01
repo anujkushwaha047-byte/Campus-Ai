@@ -11,6 +11,8 @@ import {
 } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { Header } from "./components/Header";
+import AdminLoginPage from "./pages/AdminLoginPage";
+import AdminDashboard from "./pages/AdminDashboard";
 import { AdminDashboardView } from "./pages/AdminDashboardView";
 import { StudentDashboardView } from "./pages/StudentDashboardView";
 import { ComplaintsListView } from "./pages/ComplaintsListView";
@@ -283,6 +285,17 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
     showToast("All notifications marked as read.");
   };
+
+const AppRoutes = (
+  <Router>
+    <Switch>
+      <Route path="/admin-login" component={AdminLoginPage} />
+      <Route path="/admin" component={AdminDashboard} />
+      <Route path="/dashboard" component={StudentDashboardView} />
+      {/* Add other routes here if necessary */}
+    </Switch>
+  </Router>
+);
 
   // Calculate current dynamic counts
   const criticalCount = complaints.filter(

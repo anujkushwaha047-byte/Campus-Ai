@@ -228,3 +228,5 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({ onLoginSuccess }
     </div>
   );
 };
+
+export default AdminLoginPage;
