@@ -24,6 +24,7 @@ import { StudentAuthModal } from "./components/StudentAuthModal";
 import { ResolveConfirmationModal } from "./components/ResolveConfirmationModal";
 import { StudentsManagementView } from "./pages/StudentsManagementView";
 import { LoginPage } from "./pages/LoginPage";
+import { AdminLoginPage } from "./pages/AdminLoginPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { getStoredAuth, saveStoredAuth, clearStoredAuth, isAuthenticated, getAuthHeaders } from "./utils/auth";
 import { CheckCircle2, AlertCircle, Info, Sparkles } from "lucide-react";
@@ -621,6 +622,26 @@ export default function App() {
         {/* 4 & 5. Dashboard Route: Protected by ProtectedRoute */}
         <Route
           path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <DashboardApp
+                studentProfile={studentProfile}
+                onLogout={handleLogout}
+                onUpdateStudentProfile={handleLoginSuccess}
+              />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* 6. Admin Login Route: NEW admin login page */}
+        <Route
+          path="/admin-login"
+          element={<AdminLoginPage onLoginSuccess={handleLoginSuccess} />}
+        />
+
+        {/* 7. Admin Dashboard Route: Protected admin portal */}
+        <Route
+          path="/admin"
           element={
             <ProtectedRoute>
               <DashboardApp

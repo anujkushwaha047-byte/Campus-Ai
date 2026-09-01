@@ -240,8 +240,8 @@ const studentAcademicDirectory: Record<string, { name: string; department: strin
 // 3. CRYPTOGRAPHIC AUTHENTICATION TOKENS
 // ==========================================
 interface UserPayload {
-  studentId: string;
-  rollNumber: string;
+  studentId?: string;  // Optional for admin tokens
+  rollNumber?: string; // Optional for admin tokens
   email: string;
   name: string;
   role: "student" | "admin";
@@ -899,6 +899,54 @@ app.post("/api/auth/verify-otp", (req, res) => {
     token,
     isNewRegistration: isNew,
     student: studentProfile
+  });
+});
+
+// ==========================================
+// 3. ADMIN LOGIN (NEW ENDPOINT - EMAIL & PASSWORD)
+// ==========================================
+
+app.post("/api/auth/admin-login", (req, res) => {
+  const { email, password } = req.body;
+
+  // Validation
+  if (!email || typeof email !== "string" || !email.includes("@")) {
+    return res.status(400).json({ error: "Please enter a valid email address." });
+  }
+
+  if (!password || typeof password !== "string" || password.length < 1) {
+    return res.status(400).json({ error: "Please enter your password." });
+  }
+
+  // Get admin credentials from environment variables
+  const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@college.edu").toLowerCase();
+  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+
+  const cleanEmail = email.trim().toLowerCase();
+
+  // Verify admin credentials (strict comparison)
+  if (cleanEmail !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
+    console.log(`[AUTH] Failed admin login attempt: ${cleanEmail}`);
+    return res.status(401).json({ error: "Invalid admin credentials." });
+  }
+
+  // Generate admin authentication token (ROLE: admin)
+  const token = generateAuthToken({
+    studentId: "admin",
+    rollNumber: "ADMIN",
+    email: ADMIN_EMAIL,
+    role: "admin",
+    name: "Administrator"
+  });
+
+  console.log(`[AUTH] Admin authenticated: ${ADMIN_EMAIL}`);
+
+  return res.json({
+    success: true,
+    token,
+    email: ADMIN_EMAIL,
+    adminId: "admin",
+    message: "Admin authentication successful."
   });
 });
 
