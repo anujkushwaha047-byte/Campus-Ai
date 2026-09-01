@@ -15,11 +15,28 @@ import { StudentProfile } from "../types";
 import { saveStoredAuth } from "../utils/auth";
 
 interface AdminLoginPageProps {
-  onLoginSuccess: (student: StudentProfile) => void;
+  onLoginSuccess?: (student: StudentProfile) => void;
 }
 
 export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({ onLoginSuccess }) => {
-  const navigate = useNavigate();
+  let navigate: any = null;
+  try {
+    navigate = useNavigate();
+  } catch (e) {
+    navigate = null;
+  }
+
+  const navigateTo = (path: string) => {
+    if (navigate) {
+      try {
+        navigate(path, { replace: true });
+        return;
+      } catch (e) {
+        // fallback
+      }
+    }
+    window.location.href = path;
+  };
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -84,11 +101,13 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({ onLoginSuccess }
 
         // Show success state before redirect
         setIsSuccess(true);
-        onLoginSuccess(adminProfile);
+        if (onLoginSuccess) {
+          onLoginSuccess(adminProfile);
+        }
 
         // Redirect to admin dashboard after 1.5 seconds
         setTimeout(() => {
-          navigate("/admin", { replace: true });
+          navigateTo("/admin");
         }, 1500);
       } else {
         setErrorMsg(data.error || "Login failed. Please try again.");
@@ -217,7 +236,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({ onLoginSuccess }
         <div className="mt-8 pt-6 border-t border-slate-700 text-center">
           <p className="text-slate-400 text-sm mb-4">Access restricted to authorized administrators only.</p>
           <button
-            onClick={() => navigate("/login", { replace: true })}
+            onClick={() => navigateTo("/login")}
             className="text-blue-400 hover:text-blue-300 text-sm font-medium flex items-center justify-center gap-2 mx-auto transition"
           >
             Back to Student Login
