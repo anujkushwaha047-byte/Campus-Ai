@@ -32,6 +32,7 @@ export const COLLEGE_DIRECTORY: CollegeDirectoryEntry[] = [
   { name: "Dr. A. Ambikapathy", designation: "HoD - ECE", department: "Electronics & Communication", phone: "0120-2331038", email: "hod.ece@its.edu.in", source: OFFICIAL_SOURCE_URLS.directory, verified: true },
   { name: "Dr. O. P. Choudhary", designation: "HoD - Applied Science & Humanities", department: "Applied Sciences", phone: "0120-2331026", email: "hod.ash@its.edu.in", source: OFFICIAL_SOURCE_URLS.directory, verified: true },
   { name: "Mr. Nitin Gupta", designation: "Registrar", department: "Administration", phone: "0120-2331027", email: "reg.engg@its.edu.in", source: OFFICIAL_SOURCE_URLS.directory, verified: true },
+  { name: "Mr. Manish Kushwah", designation: "Librarian", department: "Academic support services", phone: "9560338223", email: "libr.engg@its.edu.in", source: OFFICIAL_SOURCE_URLS.directory, verified: true }
 ] as const;
 
 export const TEAM_MEMBERS = [
