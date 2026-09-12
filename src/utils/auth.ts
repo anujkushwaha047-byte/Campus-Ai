@@ -9,7 +9,7 @@ export interface AuthSession {
   timestamp: number;
 }
 
-export type AppRole = "student" | "admin" | "warden" | "staff";
+export type AppRole = "student" | "admin" | "main_admin" | "super_admin" | "warden" | "staff";
 
 export function getSessionRole(): AppRole {
   const role = getStoredAuth()?.student.role;
@@ -18,7 +18,7 @@ export function getSessionRole(): AppRole {
 }
 
 export function getDashboardPath(role = getSessionRole()): string {
-  if (role === "admin") return "/admin-dashboard";
+  if (role === "admin" || role === "main_admin" || role === "super_admin") return "/admin-dashboard";
   if (role === "warden") return "/warden-dashboard";
   if (role === "staff") return "/department-dashboard";
   return "/dashboard";

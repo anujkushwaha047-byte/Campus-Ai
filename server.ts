@@ -52,7 +52,7 @@ function readAuthToken(req: express.Request): AuthenticatedUser | null {
   try {
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as AuthenticatedUser & { exp?: number };
     if (!parsed.id || !parsed.role || !parsed.exp || parsed.exp < Date.now()) return null;
-    return { id: parsed.id, role: parsed.role, rollNumber: parsed.rollNumber, name: parsed.name, email: parsed.email, sector: parsed.sector, department: parsed.department, year: parsed.year, studentId: parsed.studentId || parsed.id };
+    return { id: parsed.studentId || parsed.id, role: parsed.role, rollNumber: parsed.rollNumber, name: parsed.name, email: parsed.email, sector: parsed.sector, department: parsed.department, year: parsed.year, studentId: parsed.studentId || parsed.id };
   } catch {
     return null;
   }
@@ -886,7 +886,50 @@ app.post("/api/auth/demo-login", (req, res) => {
     return res.status(403).json({ error: "Demo login is disabled in this environment." });
   }
 
-  const { rollNumber = "23AIML001" } = req.body;
+  const { account = "student", rollNumber = "23AIML001" } = req.body;
+  const demoAccounts: Record<string, { id: string; name: string; role: "main_admin" | "warden" | "staff"; department: string; email: string }> = {
+    super_admin: { id: "demo-super-admin", name: "Demo Super Admin", role: "main_admin", department: "Administration", email: "demo.superadmin@campus.local" },
+    warden: { id: "demo-warden", name: "Demo Warden", role: "warden", department: "Hostel / Warden", email: "demo.warden@campus.local" },
+    it_staff: { id: "demo-it-staff", name: "Demo IT Staff", role: "staff", department: "IT / Network", email: "demo.it@campus.local" },
+    maintenance_staff: { id: "demo-maintenance-staff", name: "Demo Maintenance Staff", role: "staff", department: "Room Maintenance", email: "demo.maintenance@campus.local" },
+    electrical_staff: { id: "demo-electrical-staff", name: "Demo Electrical Staff", role: "staff", department: "Electrical", email: "demo.electrical@campus.local" },
+    plumbing_staff: { id: "demo-plumbing-staff", name: "Demo Plumbing Staff", role: "staff", department: "Water & Plumbing", email: "demo.plumbing@campus.local" },
+    mess_staff: { id: "demo-mess-staff", name: "Demo Mess Staff", role: "staff", department: "Mess / Food", email: "demo.mess@campus.local" },
+    housekeeping_staff: { id: "demo-housekeeping-staff", name: "Demo Housekeeping Staff", role: "staff", department: "Housekeeping", email: "demo.housekeeping@campus.local" },
+    security_staff: { id: "demo-security-staff", name: "Demo Security Staff", role: "staff", department: "Security", email: "demo.security@campus.local" },
+  };
+  const demoAccount = demoAccounts[String(account)];
+  if (demoAccount) {
+    const token = generateAuthToken({
+      studentId: demoAccount.id,
+      rollNumber: "DEMO-STAFF",
+      email: demoAccount.email,
+      name: demoAccount.name,
+      role: demoAccount.role,
+      department: demoAccount.department,
+    });
+    return res.json({
+      success: true,
+      token,
+      role: demoAccount.role,
+      demoAccount: true,
+      student: {
+        id: demoAccount.id,
+        studentId: demoAccount.id,
+        rollNumber: "DEMO-STAFF",
+        email: demoAccount.email,
+        phone: "",
+        emailVerified: true,
+        isVerified: true,
+        registrationDate: new Date().toISOString(),
+        name: demoAccount.name,
+        department: demoAccount.department,
+        assignedDepartment: demoAccount.department,
+        year: "Demo",
+        role: demoAccount.role,
+      },
+    });
+  }
   const cleanRoll = String(rollNumber).trim().toUpperCase();
 
   const academic = studentAcademicDirectory[cleanRoll] || {
@@ -916,7 +959,8 @@ app.post("/api/auth/demo-login", (req, res) => {
     registrationDate: csvRecord.registration_date,
     name: academic.name,
     department: academic.department,
-    year: academic.year
+    year: academic.year,
+    role: "student"
   };
 
   // Generate valid cryptographically signed HMAC token for demo student (strictly student role)
@@ -1005,7 +1049,8 @@ app.post("/api/auth/verify-otp", (req, res) => {
     registrationDate: csvRecord.registration_date,
     name: academic.name,
     department: academic.department,
-    year: academic.year
+    year: academic.year,
+    role: "student"
   };
 
   // Generate cryptographically signed HMAC token
@@ -1218,7 +1263,7 @@ app.get("/api/complaints", optionalAuth, (req, res) => {
 app.get("/api/complaints/:id", requireAuth, (req, res) => {
   if (req.params.id === "assigned") {
     const user = req.user!;
-    const isStaff = user.role === "warden" || user.role === "sector_admin" || user.role === "admin" || user.role === "main_admin";
+    const isStaff = user.role === "warden" || user.role === "staff" || user.role === "sector_admin" || user.role === "admin" || user.role === "main_admin";
     if (!isStaff) return res.status(403).json({ error: "Department access required." });
     const assigned = complaints.filter((item) =>
       (user.id && item.assignedToId === user.id) ||
@@ -1667,7 +1712,7 @@ app.post("/api/complaints/:id/assign", requireAuth, requireAdmin, (req, res) => 
 // Department staff can view only complaints assigned to their identity or department.
 app.get("/api/complaints/assigned", requireAuth, (req, res) => {
   const user = req.user!;
-  const isStaff = user.role === "warden" || user.role === "sector_admin" || user.role === "admin" || user.role === "main_admin";
+  const isStaff = user.role === "warden" || user.role === "staff" || user.role === "sector_admin" || user.role === "admin" || user.role === "main_admin";
   if (!isStaff) return res.status(403).json({ error: "Department access required." });
 
   const assigned = complaints.filter((complaint) =>
@@ -1685,7 +1730,7 @@ app.patch("/api/complaints/:id/status", requireAuth, (req, res) => {
   const user = req.user!;
   const isAdmin = user.role === "admin" || user.role === "main_admin" || user.role === "sector_admin";
   const canManage = isAdmin ||
-    user.role === "warden" &&
+    (user.role === "warden" || user.role === "staff") &&
     ((user.id && complaint.assignedToId === user.id) || (user.department && complaint.department === user.department));
   if (!canManage) return res.status(403).json({ error: "You are not authorized to update this complaint." });
 

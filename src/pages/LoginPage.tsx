@@ -39,7 +39,7 @@ import {
   Star
 } from "lucide-react";
 import { StudentProfile } from "../types";
-import { saveStoredAuth, isAuthenticated } from "../utils/auth";
+import { saveStoredAuth, isAuthenticated, getDashboardPath } from "../utils/auth";
 import {
   COLLEGE_INFORMATION,
   COLLEGE_DIRECTORY,
@@ -51,6 +51,19 @@ import {
 interface LoginPageProps {
   onLoginSuccess: (student: StudentProfile) => void;
 }
+
+const DEMO_ACCOUNTS = [
+  { id: "student", label: "Demo Student", role: "STUDENT", department: "—" },
+  { id: "super_admin", label: "Demo Super Admin", role: "SUPER ADMIN", department: "Administration" },
+  { id: "warden", label: "Demo Warden", role: "WARDEN", department: "Hostel / Warden" },
+  { id: "it_staff", label: "Demo IT Staff", role: "STAFF", department: "IT / Network" },
+  { id: "maintenance_staff", label: "Demo Maintenance Staff", role: "STAFF", department: "Room Maintenance" },
+  { id: "electrical_staff", label: "Demo Electrical Staff", role: "STAFF", department: "Electrical" },
+  { id: "plumbing_staff", label: "Demo Plumbing Staff", role: "STAFF", department: "Water & Plumbing" },
+  { id: "mess_staff", label: "Demo Mess Staff", role: "STAFF", department: "Mess / Food" },
+  { id: "housekeeping_staff", label: "Demo Housekeeping Staff", role: "STAFF", department: "Housekeeping" },
+  { id: "security_staff", label: "Demo Security Staff", role: "STAFF", department: "Security" },
+];
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const navigate = useNavigate();
@@ -68,6 +81,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const [errorMsg, setErrorMsg] = useState("");
   const [demoCode, setDemoCode] = useState("");
   const [verifiedStudent, setVerifiedStudent] = useState<StudentProfile | null>(null);
+  const [selectedDemoAccount, setSelectedDemoAccount] = useState("student");
 
   // Countdown timer for OTP resend
   useEffect(() => {
@@ -218,14 +232,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   };
 
   // 1-Click Instant Demo Login
-  const handleInstantDemoLogin = async (demoRoll = "23AIML001", _demoEmail?: string, _demoPhone?: string) => {
+  const handleInstantDemoLogin = async (demoRoll = "23AIML001", _demoEmail?: string, _demoPhone?: string, account = selectedDemoAccount) => {
     setErrorMsg("");
     setIsDemoLoggingIn(true);
     try {
       const res = await fetch("/api/auth/demo-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rollNumber: demoRoll }),
+        body: JSON.stringify({ rollNumber: demoRoll, account }),
       });
 
       const data = await res.json();
@@ -237,7 +251,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
         setTimeout(() => {
           onLoginSuccess(data.student);
-          navigate("/dashboard", { replace: true });
+          navigate(getDashboardPath(data.student.role || data.role), { replace: true });
         }, 800);
       } else {
         setErrorMsg(data.error || "Demo authentication failed. Please try standard login.");
@@ -532,6 +546,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                         Aman Verma (2023ECE052)
                       </button>
                     </div>
+                    <div className="pt-2 border-t border-slate-200">
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                        Demo Login Account
+                      </label>
+                      <select
+                        value={selectedDemoAccount}
+                        onChange={(e) => setSelectedDemoAccount(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-[#E5EAF1] rounded-xl text-xs font-semibold text-slate-700"
+                      >
+                        {DEMO_ACCOUNTS.map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.label} — {account.role} — {account.department}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   {/* 1. Roll Number Input */}
@@ -616,10 +646,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                         </>
                       )}
                     </button>
+                    <p className="text-[11px] text-center text-slate-500">
+                      Selected account: <strong>{DEMO_ACCOUNTS.find((account) => account.id === selectedDemoAccount)?.label}</strong>
+                    </p>
 
                     <button
                       type="button"
-                      onClick={() => handleInstantDemoLogin(rollNumber || "23AIML001", email || "student@college.edu.in", phone || "9876543210")}
+                      onClick={() => handleInstantDemoLogin(rollNumber || "23AIML001", email || "student@college.edu.in", phone || "9876543210", selectedDemoAccount)}
                       disabled={isSendingOtp || isDemoLoggingIn}
                       className="w-full py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-60 shadow-2xs"
                     >
@@ -631,7 +664,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                       ) : (
                         <>
                           <Zap className="w-3.5 h-3.5 text-amber-600 fill-amber-600" />
-                          <span>Instant Demo Login (1-Click)</span>
+                          <span>Login as {DEMO_ACCOUNTS.find((account) => account.id === selectedDemoAccount)?.label || "Demo Student"}</span>
                         </>
                       )}
                     </button>
@@ -764,6 +797,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                       Welcome, <strong>{verifiedStudent?.name || "Student"}</strong> (
                       {verifiedStudent?.rollNumber}).
                     </p>
+                    {verifiedStudent?.role && (
+                      <p className="text-xs text-slate-600 mt-2">
+                        Role: <strong>{verifiedStudent.role === "main_admin" ? "SUPER ADMIN" : verifiedStudent.role.toUpperCase()}</strong>
+                        {" · "}Department: <strong>{verifiedStudent.assignedDepartment || verifiedStudent.department || "—"}</strong>
+                      </p>
+                    )}
                     <p className="text-[11px] text-emerald-600 font-medium mt-0.5">
                       Session verified. Redirecting to your CampusCare Dashboard...
                     </p>
