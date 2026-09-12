@@ -264,6 +264,42 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
     }
   };
 
+  const handleAssignComplaint = async (
+    complaintId: string,
+    department: string,
+    assigneeId: string,
+    assigneeName: string,
+    assigneeRole: string,
+    priority: Priority,
+  ) => {
+    try {
+      const res = await fetch(`/api/complaints/${complaintId}/assign`, {
+        method: "POST",
+        headers: getAuthHeaders("admin"),
+        body: JSON.stringify({
+          department,
+          assignedTo: assigneeName,
+          assignedToId: assigneeId,
+          assignedOfficerRole: assigneeRole,
+          priority,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.complaint) {
+        throw new Error(data.error || "Failed to assign complaint.");
+      }
+
+      setComplaints((prev) => prev.map((c) => (c.id === data.complaint.id ? data.complaint : c)));
+      setSelectedComplaint(data.complaint);
+      await fetchNotifications();
+      showToast(`Complaint assigned to ${department}.`, "success");
+    } catch (err: any) {
+      console.error("Assignment error:", err);
+      showToast(err.message || "Failed to assign complaint.", "error");
+      throw err;
+    }
+  };
+
   const handleNewComplaintSuccess = (newComplaint: Complaint) => {
     setComplaints((prev) => [newComplaint, ...prev]);
     fetchAnalytics();
@@ -272,6 +308,13 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
   };
 
   const handleNotificationClick = (notif: NotificationItem) => {
+    if (!notif.read) {
+      fetch(`/api/notifications/${notif.id}/read`, {
+        method: "PATCH",
+        headers: getAuthHeaders(userRole),
+      }).catch((err) => console.warn("Failed to mark notification as read:", err));
+      setNotifications((prev) => prev.map((item) => item.id === notif.id ? { ...item, read: true } : item));
+    }
     if (notif.complaintId) {
       const target = complaints.find((c) => c.id === notif.complaintId);
       if (target) {
@@ -281,8 +324,18 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
   };
 
   const handleMarkAllNotificationsRead = async () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-    showToast("All notifications marked as read.");
+    try {
+      const res = await fetch("/api/notifications/mark-all-read", {
+        method: "POST",
+        headers: getAuthHeaders(userRole),
+      });
+      if (!res.ok) throw new Error("Failed to update notification status.");
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+      showToast("All notifications marked as read.");
+    } catch (err) {
+      console.error("Mark-all-read error:", err);
+      showToast("Unable to mark notifications as read.", "error");
+    }
   };
 
   // Calculate current dynamic counts
@@ -538,6 +591,7 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
         userRole={userRole}
         onUpdateComplaint={handleUpdateComplaint}
         onResolveClick={(c) => setResolvingComplaint(c)}
+        onAssignComplaint={handleAssignComplaint}
       />
 
       {/* Admin Complaint Resolve Confirmation Modal */}

@@ -20,6 +20,7 @@ import { Complaint, Priority, ComplaintStatus } from "../types";
 import { PriorityBadge, StatusBadge } from "./PriorityBadge";
 import { AIAnalysisCard } from "./AIAnalysisCard";
 import { ComplaintTimeline } from "./ComplaintTimeline";
+import { DEPARTMENTS, getDepartmentDefinition } from "../departmentConfig";
 
 interface ComplaintDetailsModalProps {
   complaint: Complaint | null;
@@ -28,6 +29,7 @@ interface ComplaintDetailsModalProps {
   userRole: "admin" | "student";
   onUpdateComplaint: (updated: Partial<Complaint> & { newComment?: string; author?: string; role?: 'admin' | 'student' | 'officer'; overrideNote?: string }) => void;
   onResolveClick?: (complaint: Complaint) => void;
+  onAssignComplaint?: (complaintId: string, department: string, assigneeId: string, assigneeName: string, assigneeRole: string, priority: Priority) => Promise<void>;
 }
 
 export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
@@ -37,12 +39,14 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
   userRole,
   onUpdateComplaint,
   onResolveClick,
+  onAssignComplaint,
 }) => {
   const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "comments" | "admin_actions">("overview");
   const [commentText, setCommentText] = useState("");
   const [selectedStatus, setSelectedStatus] = useState<ComplaintStatus>(complaint?.status || "Pending");
   const [selectedPriority, setSelectedPriority] = useState<Priority>(complaint?.priority || "Medium");
   const [assignedOfficer, setAssignedOfficer] = useState(complaint?.assignedTo || "");
+  const [selectedDepartment, setSelectedDepartment] = useState(complaint?.department || "");
   const [overrideNote, setOverrideNote] = useState("");
   const [isSuggestingAi, setIsSuggestingAi] = useState(false);
   const [aiDraft, setAiDraft] = useState<{ resolutionSummary: string; internalNotes: string; preventativeAction: string } | null>(null);
@@ -72,6 +76,34 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
       assignedTo: assignedOfficer,
       assignedOfficerRole: "Department Duty Officer",
       author: "Super Administrator",
+    });
+  };
+
+  const departmentDefinition = getDepartmentDefinition(selectedDepartment);
+  const handleAssignComplaint = async () => {
+    const assignee = departmentDefinition?.assignees.find((item) => item.id === assignedOfficer);
+    if (!selectedDepartment || !assignee) return;
+
+    if (onAssignComplaint) {
+      await onAssignComplaint(
+        complaint.id,
+        selectedDepartment,
+        assignee.id,
+        assignee.name,
+        assignee.role,
+        selectedPriority,
+      );
+      return;
+    }
+
+    onUpdateComplaint({
+      department: selectedDepartment,
+      assignedTo: assignee.name,
+      assignedOfficerRole: assignee.role,
+      priority: selectedPriority,
+      status: "In Progress",
+      author: "Super Administrator",
+      overrideNote: `Complaint assigned to ${selectedDepartment}.`,
     });
   };
 
@@ -434,7 +466,7 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
                     Update Complaint Status
                   </h4>
                   <div className="grid grid-cols-2 gap-2 mb-4">
-                    {(["Pending", "Under Review", "In Progress", "Resolved", "Rejected"] as ComplaintStatus[]).map((st) => (
+                    {(["Pending", "Under Review", "Assigned", "In Progress", "Resolved", "Rejected"] as ComplaintStatus[]).map((st) => (
                       <button
                         key={st}
                         onClick={() => handleStatusChange(st)}
@@ -460,7 +492,7 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
                   </p>
 
                   <div className="grid grid-cols-2 gap-2 mb-3">
-                    {(["Critical", "High", "Medium", "Low"] as Priority[]).map((pr) => (
+                    {(["Urgent", "Critical", "High", "Medium", "Low"] as Priority[]).map((pr) => (
                       <button
                         key={pr}
                         onClick={() => setSelectedPriority(pr)}
@@ -492,33 +524,65 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
                 </div>
               </div>
 
-              {/* Officer & Department Re-routing */}
+              {/* Department & responsible person assignment */}
               <div className="bg-white rounded-2xl p-5 border border-[#E5EAF1] shadow-xs">
-                <h4 className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-3">
-                  Assign Officer / Maintenance Desk
+                <h4 className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">
+                  Assign Complaint
                 </h4>
-                <div className="flex gap-3 flex-col sm:flex-row">
+                <p className="text-[11px] text-slate-400 mb-3">
+                  AI suggestion: {complaint.department || "Not available"}. Final assignment remains under administrator control.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <select
+                    value={selectedDepartment}
+                    onChange={(e) => {
+                      setSelectedDepartment(e.target.value);
+                      setAssignedOfficer("");
+                    }}
+                    className="px-3 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl"
+                  >
+                    <option value="">Select Department...</option>
+                    {DEPARTMENTS.map((department) => (
+                      <option key={department.id} value={department.name}>{department.name}</option>
+                    ))}
+                  </select>
                   <select
                     value={assignedOfficer}
                     onChange={(e) => setAssignedOfficer(e.target.value)}
-                    className="flex-1 px-3 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl"
+                    disabled={!departmentDefinition}
+                    className="px-3 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl disabled:opacity-50"
                   >
-                    <option value="">Select Duty Officer...</option>
-                    <option value="Chief Warden Dr. Ramesh V.">Chief Warden Dr. Ramesh V. (Hostel)</option>
-                    <option value="Head Librarian Mrs. Sunita Rao">Mrs. Sunita Rao (Library)</option>
-                    <option value="Dr. Arvind Swamy (Exam Controller)">Dr. Arvind Swamy (Exam Cell)</option>
-                    <option value="Er. Sandeep Joshi (IT Admin)">Er. Sandeep Joshi (IT Infra)</option>
-                    <option value="Chief Engineer K. N. Sastry">K. N. Sastry (Estate & Civil)</option>
-                    <option value="Mr. Baldev Singh (Transport)">Mr. Baldev Singh (Transport)</option>
+                    <option value="">Select Responsible Person...</option>
+                    {departmentDefinition?.assignees.map((assignee) => (
+                      <option key={assignee.id} value={assignee.id}>{assignee.name}</option>
+                    ))}
                   </select>
-
-                  <button
-                    onClick={handleAssignOfficer}
-                    disabled={!assignedOfficer}
-                    className="px-5 py-2 bg-[#146EF5] text-white font-bold text-xs rounded-xl hover:bg-blue-600 disabled:opacity-50 cursor-pointer"
+                  <select
+                    value={selectedPriority}
+                    onChange={(e) => setSelectedPriority(e.target.value as Priority)}
+                    className="px-3 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl"
                   >
-                    Assign Task
+                    {(["Low", "Medium", "High", "Critical", "Urgent"] as Priority[]).map((priority) => (
+                      <option key={priority} value={priority}>{priority}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleAssignComplaint}
+                    disabled={!selectedDepartment || !assignedOfficer || complaint.status === "Resolved"}
+                    className="sm:col-span-3 px-5 py-2 bg-[#146EF5] text-white font-bold text-xs rounded-xl hover:bg-blue-600 disabled:opacity-50 cursor-pointer"
+                  >
+                    Assign Complaint
                   </button>
+                  {/* Keep the legacy free-form action available only for old records without a catalog match. */}
+                  {!onAssignComplaint && (
+                    <button
+                      onClick={handleAssignOfficer}
+                      disabled={!assignedOfficer}
+                      className="hidden"
+                    >
+                      Assign Task
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

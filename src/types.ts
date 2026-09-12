@@ -44,11 +44,12 @@ export type Sector =
   | 'Fees / Accounts'
   | 'General Administration';
 
-export type Priority = 'Critical' | 'High' | 'Medium' | 'Low';
+export type Priority = 'Urgent' | 'Critical' | 'High' | 'Medium' | 'Low';
 
 export type ComplaintStatus = 
   | 'Pending'
   | 'Under Review'
+  | 'Assigned'
   | 'In Progress'
   | 'Resolved'
   | 'Rejected';
@@ -103,6 +104,7 @@ export interface Complaint {
   department: string;
   sector: Sector;
   assignedTo?: string;
+  assignedToId?: string;
   assignedOfficerRole?: string;
   assignedAdminId?: string;
   assignedAdminName?: string;
@@ -221,4 +223,3 @@ export interface AnalyticsData {
 }
 
 export type AnalyticsSummary = AnalyticsData;
-

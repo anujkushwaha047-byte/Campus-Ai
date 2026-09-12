@@ -14,6 +14,12 @@ export const PriorityBadge: React.FC<PriorityBadgeProps> = ({
   showIcon = false,
 }) => {
   const styles: Record<Priority, { bg: string; text: string; border: string; icon: any }> = {
+    Urgent: {
+      bg: "bg-red-100 text-red-800",
+      text: "text-red-800",
+      border: "border-red-300",
+      icon: AlertCircle,
+    },
     Critical: {
       bg: "bg-red-50 text-red-700",
       text: "text-red-700",
@@ -80,6 +86,12 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       text: "text-blue-800",
       border: "border-blue-200",
       dot: "bg-blue-500",
+    },
+    Assigned: {
+      bg: "bg-indigo-50 text-indigo-800",
+      text: "text-indigo-800",
+      border: "border-indigo-200",
+      dot: "bg-indigo-500",
     },
     "In Progress": {
       bg: "bg-purple-50 text-purple-800",

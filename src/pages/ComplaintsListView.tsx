@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Complaint, Category, Priority, ComplaintStatus } from "../types";
 import { PriorityBadge, StatusBadge } from "../components/PriorityBadge";
+import { DEPARTMENTS } from "../departmentConfig";
 
 interface ComplaintsListViewProps {
   complaints: Complaint[];
@@ -38,6 +39,7 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
   const [categoryFilter, setCategoryFilter] = useState<string>(initialFilter?.category || "all");
   const [priorityFilter, setPriorityFilter] = useState<string>(initialFilter?.priority || "all");
   const [statusFilter, setStatusFilter] = useState<string>(initialFilter?.status || "all");
+  const [departmentFilter, setDepartmentFilter] = useState<string>("all");
 
   const categories: Category[] = [
     "Fire & Safety",
@@ -59,8 +61,8 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
     "General / Other",
   ];
 
-  const priorities: Priority[] = ["Critical", "High", "Medium", "Low"];
-  const statuses: ComplaintStatus[] = ["Pending", "Under Review", "In Progress", "Resolved", "Rejected"];
+  const priorities: Priority[] = ["Urgent", "Critical", "High", "Medium", "Low"];
+  const statuses: ComplaintStatus[] = ["Pending", "Under Review", "Assigned", "In Progress", "Resolved", "Rejected"];
 
   const filteredComplaints = useMemo(() => {
     return complaints.filter((c) => {
@@ -75,10 +77,11 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
       const matchesCategory = categoryFilter === "all" || c.category === categoryFilter;
       const matchesPriority = priorityFilter === "all" || c.priority === priorityFilter;
       const matchesStatus = statusFilter === "all" || c.status === statusFilter;
+      const matchesDepartment = departmentFilter === "all" || c.department === departmentFilter;
 
-      return matchesSearch && matchesCategory && matchesPriority && matchesStatus;
+      return matchesSearch && matchesCategory && matchesPriority && matchesStatus && matchesDepartment;
     });
-  }, [complaints, search, categoryFilter, priorityFilter, statusFilter]);
+  }, [complaints, search, categoryFilter, priorityFilter, statusFilter, departmentFilter]);
 
   const handleExportCSV = () => {
     const headers = ["ID", "Student", "Roll", "Category", "Priority", "Status", "Title", "Date", "AI_Reason"];
@@ -109,6 +112,7 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
     setCategoryFilter("all");
     setPriorityFilter("all");
     setStatusFilter("all");
+    setDepartmentFilter("all");
   };
 
   return (
@@ -137,7 +141,7 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
         </div>
 
         {/* Filters Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 pt-2">
           {/* Search Input */}
           <div className="relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -197,10 +201,24 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
               ))}
             </select>
           </div>
+
+          {/* Department Filter */}
+          <div>
+            <select
+              value={departmentFilter}
+              onChange={(e) => setDepartmentFilter(e.target.value)}
+              className="w-full px-3 py-2 text-xs bg-[#F7F9FC] border border-[#E5EAF1] rounded-xl font-medium text-slate-700 focus:bg-white focus:border-[#146EF5]"
+            >
+              <option value="all">All Departments</option>
+              {DEPARTMENTS.map((department) => (
+                <option key={department.id} value={department.name}>{department.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Active Filter Tags */}
-        {(categoryFilter !== "all" || priorityFilter !== "all" || statusFilter !== "all" || search !== "") && (
+        {(categoryFilter !== "all" || priorityFilter !== "all" || statusFilter !== "all" || departmentFilter !== "all" || search !== "") && (
           <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-slate-100 text-xs">
             <span className="text-slate-400 font-medium">Active filters:</span>
             {categoryFilter !== "all" && (
@@ -216,6 +234,11 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
             {statusFilter !== "all" && (
               <span className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200">
                 Status: {statusFilter}
+              </span>
+            )}
+            {departmentFilter !== "all" && (
+              <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
+                Department: {departmentFilter}
               </span>
             )}
             <button
@@ -331,6 +354,8 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
                 <th className="py-3.5 px-4">Subject</th>
                 <th className="py-3.5 px-4">Category</th>
                 <th className="py-3.5 px-4">Student</th>
+                <th className="py-3.5 px-4">Department</th>
+                <th className="py-3.5 px-4">Assigned To</th>
                 <th className="py-3.5 px-4">Status</th>
                 <th className="py-3.5 px-4">Date</th>
                 <th className="py-3.5 px-6 text-right">Actions</th>
@@ -339,7 +364,7 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
             <tbody className="divide-y divide-slate-100 font-medium">
               {filteredComplaints.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-400 text-xs">
+                  <td colSpan={9} className="py-12 text-center text-slate-400 text-xs">
                     No complaints matched your filter criteria.
                   </td>
                 </tr>
@@ -395,6 +420,14 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
                             </p>
                           </div>
                         </div>
+                      </td>
+
+                      {/* Assignment */}
+                      <td className="py-4 px-4 whitespace-nowrap text-xs">
+                        <span className="font-semibold text-slate-700">{c.department || "Unassigned"}</span>
+                      </td>
+                      <td className="py-4 px-4 whitespace-nowrap text-xs text-slate-600">
+                        {c.assignedTo || "Unassigned"}
                       </td>
 
                       {/* Status */}
