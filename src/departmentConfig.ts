@@ -15,7 +15,7 @@ export const DEPARTMENTS: DepartmentDefinition[] = [
     id: "hostel-warden",
     name: "Hostel / Warden",
     assignees: [
-      { id: "warden-a", name: "Warden A", role: "Hostel Warden" },
+      { id: "warden-a", name: "AAYUSH KUMAR MISHRA", role: "Hostel Warden" },
       { id: "warden-b", name: "Warden B", role: "Hostel Warden" },
       { id: "demo-warden", name: "Demo Warden", role: "Hostel Warden" },
     ],
