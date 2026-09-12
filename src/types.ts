@@ -134,6 +134,9 @@ export interface StudentProfile {
   isVerified?: boolean;
   registrationDate?: string;
   complaintCount?: number;
+  role?: UserRole | 'admin' | 'warden' | 'staff';
+  sector?: string;
+  assignedDepartment?: string;
 }
 
 export interface StudentCSVRecord {

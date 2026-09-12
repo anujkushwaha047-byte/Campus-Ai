@@ -9,6 +9,21 @@ export interface AuthSession {
   timestamp: number;
 }
 
+export type AppRole = "student" | "admin" | "warden" | "staff";
+
+export function getSessionRole(): AppRole {
+  const role = getStoredAuth()?.student.role;
+  if (role === "main_admin" || role === "sector_admin") return "admin";
+  return role === "warden" || role === "staff" ? role : "student";
+}
+
+export function getDashboardPath(role = getSessionRole()): string {
+  if (role === "admin") return "/admin-dashboard";
+  if (role === "warden") return "/warden-dashboard";
+  if (role === "staff") return "/department-dashboard";
+  return "/dashboard";
+}
+
 /**
  * Retrieve the active authentication session from localStorage.
  * Checks for validity and expiration. Returns null if missing or expired.

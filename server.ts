@@ -13,7 +13,7 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const AUTH_SECRET = process.env.AUTH_SECRET || "campuscare_auth_secret_jwt_key_2026";
 const IS_DEMO_MODE = process.env.DEMO_MODE !== "false";
 
-type UserRole = "student" | "warden" | "admin" | "sector_admin" | "main_admin";
+type UserRole = "student" | "warden" | "staff" | "admin" | "sector_admin" | "main_admin";
 interface AuthenticatedUser {
   id?: string;
   role: UserRole;
@@ -289,8 +289,9 @@ interface UserPayload {
   rollNumber?: string; // Optional for admin tokens
   email: string;
   name: string;
-  role: "student" | "admin" | "sector_admin" | "main_admin";
+  role: UserRole;
   sector?: string;
+  department?: string;
   exp: number;
 }
 
@@ -1105,6 +1106,48 @@ const handleAdminLogin = (req: express.Request, res: express.Response) => {
     message: `${name} authentication successful.`
   });
 };
+
+const STAFF_ACCOUNTS: Record<string, { password: string; id: string; name: string; role: "warden" | "staff"; department: string }> = {
+  "warden@college.edu": { password: process.env.STAFF_PASSWORD || "warden123", id: "warden-a", name: "Hostel Warden", role: "warden", department: "Hostel / Warden" },
+  "maintenance@college.edu": { password: process.env.STAFF_PASSWORD || "staff123", id: "maintenance-staff", name: "Maintenance Staff", role: "staff", department: "Room Maintenance" },
+  "it.staff@college.edu": { password: process.env.STAFF_PASSWORD || "staff123", id: "it-admin", name: "IT Admin", role: "staff", department: "IT / Network" },
+  "electrical@college.edu": { password: process.env.STAFF_PASSWORD || "staff123", id: "electrical-staff", name: "Electrical Staff", role: "staff", department: "Electrical" },
+};
+
+app.post("/api/auth/staff-login", (req, res) => {
+  const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  const account = STAFF_ACCOUNTS[email];
+  if (!account || req.body.password !== account.password) {
+    return res.status(401).json({ error: "Invalid staff credentials." });
+  }
+  const token = generateAuthToken({
+    studentId: account.id,
+    rollNumber: "STAFF",
+    email,
+    name: account.name,
+    role: account.role,
+    department: account.department,
+  });
+  res.json({
+    success: true,
+    token,
+    role: account.role,
+    staff: {
+      id: account.id,
+      studentId: account.id,
+      rollNumber: "STAFF",
+      email,
+      name: account.name,
+      phone: "",
+      department: account.department,
+      year: "Staff",
+      emailVerified: true,
+      isVerified: true,
+      role: account.role,
+      assignedDepartment: account.department,
+    },
+  });
+});
 
 app.post("/api/auth/admin-login", handleAdminLogin);
 app.post("/api/admin/login", handleAdminLogin);

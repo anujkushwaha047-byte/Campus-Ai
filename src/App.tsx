@@ -27,7 +27,9 @@ import { ResolveConfirmationModal } from "./components/ResolveConfirmationModal"
 import { StudentsManagementView } from "./pages/StudentsManagementView";
 import { LoginPage } from "./pages/LoginPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import { getStoredAuth, saveStoredAuth, clearStoredAuth, isAuthenticated, getAuthHeaders } from "./utils/auth";
+import { getStoredAuth, saveStoredAuth, clearStoredAuth, isAuthenticated, getAuthHeaders, getDashboardPath, getSessionRole } from "./utils/auth";
+import { StaffLoginPage } from "./pages/StaffLoginPage";
+import { DepartmentDashboard } from "./pages/DepartmentDashboard";
 import { CheckCircle2, AlertCircle, Info, Sparkles } from "lucide-react";
 
 // Default Initial Analytics Data (Matches Reference Dashboard Metrics)
@@ -667,7 +669,7 @@ export default function App() {
           path="/login"
           element={
             isUserAuth ? (
-              <Navigate to="/dashboard" replace />
+              <Navigate to={getDashboardPath()} replace />
             ) : (
               <LoginPage onLoginSuccess={handleLoginSuccess} />
             )
@@ -678,7 +680,7 @@ export default function App() {
         <Route
           path="/dashboard"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute allowedRoles={["student"]}>
               <DashboardApp
                 studentProfile={studentProfile}
                 onLogout={handleLogout}
@@ -689,16 +691,14 @@ export default function App() {
         />
 
         {/* 6. Admin Login Route: NEW admin login page */}
-        <Route
-          path="/admin-login"
-          element={<AdminLoginPage onLoginSuccess={handleLoginSuccess} />}
-        />
+        <Route path="/admin-login" element={<AdminLoginPage onLoginSuccess={handleLoginSuccess} />} />
+        <Route path="/staff-login" element={<StaffLoginPage />} />
 
         {/* 7. Admin Dashboard Route: Protected admin portal */}
-        <Route
-          path="/admin"
-          element={<AdminDashboard />}
-        />
+        <Route path="/admin" element={<Navigate to="/admin-dashboard" replace />} />
+        <Route path="/admin-dashboard" element={<ProtectedRoute allowedRoles={["admin"]}><AdminDashboard /></ProtectedRoute>} />
+        <Route path="/warden-dashboard" element={<ProtectedRoute allowedRoles={["warden"]}><DepartmentDashboard profile={studentProfile!} onLogout={handleLogout} /></ProtectedRoute>} />
+        <Route path="/department-dashboard" element={<ProtectedRoute allowedRoles={["staff"]}><DepartmentDashboard profile={studentProfile!} onLogout={handleLogout} /></ProtectedRoute>} />
 
         {/* Wildcard catch-all: redirect any unknown URL to "/login" */}
         <Route path="*" element={<Navigate to="/login" replace />} />

@@ -94,6 +94,8 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({ onLoginSuccess }
           name: "Administrator",
           department: "Administration",
           year: "N/A",
+          role: data.role || "admin",
+          sector: data.sector,
         };
 
         // Save authentication token with admin profile
@@ -108,7 +110,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({ onLoginSuccess }
 
         // Redirect to admin dashboard after 1.5 seconds
         setTimeout(() => {
-          navigateTo("/admin");
+          navigateTo("/admin-dashboard");
         }, 1500);
       } else {
         setErrorMsg(data.error || "Login failed. Please try again.");
