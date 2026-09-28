@@ -50,7 +50,7 @@
 - **Backend**: Node.js, Express, TypeScript, tsx
 - **AI Engine**: Google Gemini API (`@google/genai`)
 - **Data Persistence**: CSV storage engine (`data/students.csv`) + In-memory store
-- **Deployment**: Render Web Service
+- **Deployment**: Render Web Service ..
 
 ---
 
