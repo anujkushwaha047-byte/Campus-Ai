@@ -149,11 +149,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       const data = await res.json();
       if (data.success) {
         setMaskedEmail(data.maskedEmail);
-        setDemoCode(data.demoOtp || "123456");
+        setDemoCode(data.demoOtp || "");
         setStep("otp");
         setCountdown(30);
         if (data.demoOtp) {
           setOtp(data.demoOtp.split(""));
+        } else {
+          setOtp(["", "", "", "", "", ""]);
         }
       } else {
         setErrorMsg(data.error || "Failed to send verification code. Please check your credentials.");
@@ -213,12 +215,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       });
 
       const data = await res.json();
-      if (data.success && data.student) {
+      if (data.success && data.student && data.token) {
         setVerifiedStudent(data.student);
         setStep("success");
 
-        const token = data.token || `auth_token_${Date.now()}`;
-        saveStoredAuth(token, data.student);
+        saveStoredAuth(data.token, data.student);
 
         setTimeout(() => {
           onLoginSuccess(data.student);
@@ -543,7 +544,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => fillPreset("2023ECE052", "aman.verma@college.edu.in", "9123456780")}
+                        onClick={() => fillPreset("2023ECE052", "abhinav.tiwari@college.edu.in", "9123456780")}
                         className="px-2.5 py-1 bg-white border border-[#E5EAF1] hover:border-[#146EF5] hover:text-[#146EF5] rounded-lg text-[11px] font-semibold text-slate-700 transition cursor-pointer shadow-2xs"
                       >
                         Aman Verma (2023ECE052)

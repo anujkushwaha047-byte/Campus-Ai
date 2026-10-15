@@ -93,11 +93,13 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
       const data = await res.json();
       if (data.success) {
         setMaskedEmail(data.maskedEmail);
-        setDemoCode(data.demoOtp || "123456");
+        setDemoCode(data.demoOtp || "");
         setStep("otp");
         setCountdown(30);
         if (data.demoOtp) {
           setOtp(data.demoOtp.split(""));
+        } else {
+          setOtp(["", "", "", "", "", ""]);
         }
       } else {
         setErrorMsg(data.error || "Failed to send OTP. Please verify details.");
@@ -155,10 +157,8 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
       });
 
       const data = await res.json();
-      if (data.success && data.student) {
-        if (data.token) {
-          saveStoredAuth(data.token, data.student);
-        }
+      if (data.success && data.student && data.token) {
+        saveStoredAuth(data.token, data.student);
         onLoginSuccess(data.student);
         onClose();
       } else {
@@ -242,7 +242,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setDemoPreset("2023ECE052", "aman.verma@college.edu.in", "9123456780")}
+                    onClick={() => setDemoPreset("2023ECE052", "abhinav.tiwari@college.edu.in", "9123456780")}
                     className="px-2 py-0.5 bg-white border border-[#E5EAF1] hover:border-[#146EF5] rounded text-[11px] font-semibold text-slate-700 cursor-pointer"
                   >
                     Aman Verma

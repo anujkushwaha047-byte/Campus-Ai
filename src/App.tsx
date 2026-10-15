@@ -27,7 +27,7 @@ import { ResolveConfirmationModal } from "./components/ResolveConfirmationModal"
 import { StudentsManagementView } from "./pages/StudentsManagementView";
 import { LoginPage } from "./pages/LoginPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import { getStoredAuth, saveStoredAuth, clearStoredAuth, isAuthenticated, getAuthHeaders, getDashboardPath, getSessionRole } from "./utils/auth";
+import { getStoredAuth, saveStoredAuth, logoutStoredAuth, isAuthenticated, getAuthHeaders, getDashboardPath, getSessionRole } from "./utils/auth";
 import { StaffLoginPage } from "./pages/StaffLoginPage";
 import { DepartmentDashboard } from "./pages/DepartmentDashboard";
 import { CheckCircle2, AlertCircle, Info, Sparkles } from "lucide-react";
@@ -638,8 +638,8 @@ export default function App() {
     setStudentProfile(student);
   };
 
-  const handleLogout = () => {
-    clearStoredAuth();
+  const handleLogout = async () => {
+    await logoutStoredAuth();
     setStudentProfile(null);
   };
 

@@ -60,6 +60,12 @@ export function getStoredAuth(): AuthSession | null {
  */
 export function saveStoredAuth(token: string, student: StudentProfile): void {
   try {
+    const previousSession = getStoredAuth();
+    if (previousSession?.token && previousSession.token !== token) {
+      void requestTokenRevocation(previousSession.token).catch((error: unknown) => {
+        console.warn("Unable to revoke the previous account session.", error);
+      });
+    }
     clearStoredAuth();
     const session: AuthSession = {
       token,
@@ -69,6 +75,16 @@ export function saveStoredAuth(token: string, student: StudentProfile): void {
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
   } catch (err) {
     console.error("Failed to save auth session:", err);
+  }
+}
+
+async function requestTokenRevocation(token: string): Promise<void> {
+  const response = await fetch("/api/auth/logout", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok && response.status !== 401) {
+    throw new Error(`Server-side logout returned HTTP ${response.status}.`);
   }
 }
 
@@ -87,6 +103,17 @@ export function clearStoredAuth(): void {
     localStorage.removeItem("isUserAuth");
   } catch (err) {
     console.error("Failed to clear auth session:", err);
+  }
+}
+
+export async function logoutStoredAuth(): Promise<void> {
+  const session = getStoredAuth();
+  try {
+    if (session?.token) await requestTokenRevocation(session.token);
+  } catch (error) {
+    console.warn("Unable to revoke the server session; clearing local authentication.", error);
+  } finally {
+    clearStoredAuth();
   }
 }
 

@@ -19,11 +19,17 @@ services:
         value: .edu.in
       - key: DATA_DIR
         value: /var/data
+      - key: APP_URL
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
       - key: AUTH_SECRET
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
-      - key: STAFF_PASSWORD
+      - key: STAFF_CREDENTIALS
+        sync: false
+      - key: SECTOR_ADMIN_CREDENTIALS
         sync: false
       - key: SUPER_ADMIN_NAME
         sync: false

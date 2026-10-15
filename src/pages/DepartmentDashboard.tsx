@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Clock, Eye, LogOut, MapPin, ShieldAlert, Wrench, LucideIcon } from "lucide-react";
 import { Complaint, ComplaintStatus, NotificationItem, StudentProfile } from "../types";
-import { getAuthHeaders, clearStoredAuth } from "../utils/auth";
+import { getAuthHeaders } from "../utils/auth";
 import { PriorityBadge, StatusBadge } from "../components/PriorityBadge";
 
 interface DepartmentDashboardProps {
@@ -70,7 +70,6 @@ export const DepartmentDashboard: React.FC<DepartmentDashboardProps> = ({ profil
   }), [complaints]);
 
   const logout = () => {
-    clearStoredAuth();
     onLogout();
   };
 

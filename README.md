@@ -80,13 +80,17 @@
    AUTH_SECRET="a-persistent-random-secret-of-at-least-32-bytes"
    ADMIN_EMAIL="admin@college.edu"
    ADMIN_PASSWORD="a-unique-strong-legacy-admin-password"
-   STAFF_PASSWORD="a-unique-strong-staff-password"
+   STAFF_CREDENTIALS=""
+   SECTOR_ADMIN_CREDENTIALS=""
+   STAFF_PASSWORD=""
    SUPER_ADMIN_NAME="Campus Super Admin"
    SUPER_ADMIN_EMAIL="superadmin@college.edu"
    SUPER_ADMIN_PASSWORD="use-a-unique-password-of-at-least-12-characters"
    DEMO_MODE="true"
    ALLOWED_COLLEGE_EMAIL_DOMAIN=".edu.in"
    DATA_DIR="./data"
+   APP_URL="http://localhost:3000"
+   CORS_ALLOWED_ORIGINS=""
    ```
 
 4. **Start the development server:**
@@ -103,14 +107,17 @@
 
 ### Production configuration and persistence
 
-- `render.yaml` provisions a paid Starter web service with a 1 GB persistent disk mounted at `/var/data`, and sets `DATA_DIR=/var/data`. All JSON/CSV stores, including admin accounts and login throttling data, must stay under this mount. Render persistent disks require a paid service and prevent scaling that service to multiple instances.
-- Render requires `AUTH_SECRET`, `ADMIN_PASSWORD`, `STAFF_PASSWORD`, `SUPER_ADMIN_NAME`, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD`; set secret values privately in Render. Use an `AUTH_SECRET` of at least 32 bytes and unique passwords of at least 12 characters. Demo login is disabled in production. `ADMIN_EMAIL` is optional and defaults to `admin@college.edu`; `GEMINI_API_KEY` is optional unless Gemini features are required.
-- Authentication tokens remain valid across server restarts only when the same `AUTH_SECRET` is retained.
+- `render.yaml` provisions a paid Starter web service with a 1 GB persistent disk mounted at `/var/data`, and sets `DATA_DIR=/var/data`. All JSON/CSV stores, including admin accounts, login throttling, and revoked sessions, must stay under this mount. Render persistent disks require a paid service and prevent scaling that service to multiple instances.
+- Render requires `APP_URL` (the exact public HTTPS origin, for example `https://your-service.onrender.com`), `AUTH_SECRET`, `ADMIN_PASSWORD`, `STAFF_CREDENTIALS`, `SECTOR_ADMIN_CREDENTIALS`, `SUPER_ADMIN_NAME`, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD`; set the credential JSON and secret values privately in Render. Each credential object must contain an individual, unique 12+ character password for every account key in its matching server-side account map; neither staff nor sector accounts share the main Admin password. `CORS_ALLOWED_ORIGINS` is an optional comma-separated list of additional exact HTTPS origins. Use an `AUTH_SECRET` of at least 32 bytes. Demo login is disabled in production. `ADMIN_EMAIL` is optional and defaults to `admin@college.edu`; `GEMINI_API_KEY` is optional unless Gemini features are required.
+- Authentication tokens remain valid across server restarts only when the same `AUTH_SECRET` is retained. Legacy static Admin/Warden/Staff tokens are also bound to their configured password version and are invalidated when the corresponding environment password changes. Demo tokens are rejected when demo mode is disabled.
 - The first server startup hashes the configured Super Admin password and persists the account in `admin-accounts.json`. Later restarts do not reset it from environment variables. To rotate it, use the Super Admin password-change form on the Admin Dashboard; the current password is required and existing Super Admin sessions are revoked. College Admin account changes are serialized to prevent concurrent duplicate emails.
 - Super Admin can create College Admin accounts using passwords of at least 12 characters, deactivate/reactivate them, and reset their passwords. Deactivation and password reset invalidate that account's existing sessions. College Admins cannot access account-management endpoints or promote accounts.
-- For backward compatibility, `ADMIN_EMAIL`/`ADMIN_PASSWORD` still authenticate the legacy `main_admin` account, which can manage complaints but cannot manage Super Admin or College Admin accounts. Treat this as a separate break-glass college administrator and use a unique strong password. Local `ADMIN_PASSWORD` and `STAFF_PASSWORD` must be explicitly set to enable those login routes; there are no weak built-in password defaults.
-- Failed admin/staff login attempts are rate-limited and stored as keyed hashes under `DATA_DIR`; they are not cleared by a successful login. Keep a stable `AUTH_SECRET` and a single disk-backed service instance for the file-based limits to remain effective.
+- For backward compatibility, `ADMIN_EMAIL`/`ADMIN_PASSWORD` still authenticate the legacy `main_admin` account, which can manage complaints but cannot manage Super Admin or College Admin accounts. Sector Admin and Warden/Staff legacy identities remain supported but require distinct account-specific credentials in production; the shared `STAFF_PASSWORD` fallback is local-demo-only. There are no weak built-in password defaults.
+- Login and OTP requests are each limited to 10 attempts per IP per 15 minutes, and Super Admin account mutations to 10 per authenticated administrator per 15 minutes. Keyed identities are stored under `DATA_DIR`; successful requests consume a rate-limit attempt too. Keep a stable `AUTH_SECRET` and a single disk-backed service instance for the file-based limits and logout revocations to remain effective.
+- Production CORS only allows `APP_URL` and explicitly listed `CORS_ALLOWED_ORIGINS`; localhost origins are development-only. The app uses bearer tokens, not credentialed cookies.
+- OTP currently has no real email provider: it is available only in local demo mode, where the OTP is returned to the demo UI. Production OTP requests fail closed with HTTP 503, so production student OTP login requires integrating and configuring a real delivery provider before deployment.
 - This repository does not currently include PostgreSQL or read `DATABASE_URL`. Student records are stored in `students.csv`; complaints (including comments and timeline), notifications, and managed administrator accounts are stored in JSON files.
+- File replacements use a temporary file and atomic rename to reduce truncation risk, but separate CSV/JSON files are not a transactional database and do not provide cross-file atomicity. A Render persistent disk is live storage, not a backup; arrange independent backups and test restore procedures.
 
 ---
 

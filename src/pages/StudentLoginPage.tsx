@@ -17,6 +17,7 @@ import {
   ArrowLeft
 } from "lucide-react";
 import { StudentProfile } from "../types";
+import { saveStoredAuth } from "../utils/auth";
 
 interface StudentLoginPageProps {
   onLoginSuccess: (student: StudentProfile) => void;
@@ -103,12 +104,14 @@ export const StudentLoginPage: React.FC<StudentLoginPageProps> = ({
       const data = await res.json();
       if (data.success) {
         setMaskedEmail(data.maskedEmail);
-        setDemoCode(data.demoOtp || "123456");
+        setDemoCode(data.demoOtp || "");
         setStep("otp");
         setCountdown(30);
         // Pre-fill demo OTP code for seamless testing
         if (data.demoOtp) {
           setOtp(data.demoOtp.split(""));
+        } else {
+          setOtp(["", "", "", "", "", ""]);
         }
       } else {
         setErrorMsg(data.error || "Failed to send verification code. Please check your credentials.");
@@ -168,7 +171,8 @@ export const StudentLoginPage: React.FC<StudentLoginPageProps> = ({
       });
 
       const data = await res.json();
-      if (data.success && data.student) {
+      if (data.success && data.student && data.token) {
+        saveStoredAuth(data.token, data.student);
         setVerifiedStudent(data.student);
         setStep("success");
         setTimeout(() => {
@@ -360,7 +364,7 @@ export const StudentLoginPage: React.FC<StudentLoginPageProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => fillPreset("2023ECE052", "aman.verma@college.edu.in", "9123456780")}
+                      onClick={() => fillPreset("2023ECE052", "abhinav.tiwari@college.edu.in", "9123456780")}
                       className="px-2.5 py-1 bg-white border border-[#E5EAF1] hover:border-[#146EF5] hover:text-[#146EF5] rounded-lg text-[11px] font-semibold text-slate-700 transition cursor-pointer"
                     >
                       Aman Verma (2023ECE052)

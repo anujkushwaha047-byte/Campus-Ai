@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Shield, Filter, Search, LogOut, AlertTriangle, CheckCircle, Clock, FileText, Eye } from 'lucide-react';
 import { apiGet, apiPost, apiPut } from '../api';
 import { Complaint, ComplaintStatus, Priority, StudentProfile } from '../types';
-import { clearStoredAuth } from '../utils/auth';
+import { logoutStoredAuth } from '../utils/auth';
 import { ComplaintDetailsModal } from '../components/ComplaintDetailsModal';
 import { AdminAccountsPanel } from '../components/AdminAccountsPanel';
 
@@ -109,8 +109,8 @@ const AdminDashboard: React.FC<{ profile: StudentProfile }> = ({ profile }) => {
     }
   };
 
-  const handleLogout = () => {
-    clearStoredAuth();
+  const handleLogout = async () => {
+    await logoutStoredAuth();
     navigate('/login', { replace: true });
   };
 

@@ -9,17 +9,40 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
-app.set("trust proxy", 1);
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const isProduction = process.env.NODE_ENV === "production";
+app.set("trust proxy", isProduction ? 1 : false);
 const AUTH_SECRET = process.env.AUTH_SECRET || (process.env.NODE_ENV === "production" ? "" : crypto.randomBytes(32).toString("hex"));
 const IS_DEMO_MODE = process.env.NODE_ENV !== "production" && process.env.DEMO_MODE !== "false";
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@college.edu").toLowerCase();
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const STAFF_PASSWORD = process.env.STAFF_PASSWORD || "";
 const SUPER_ADMIN_NAME = process.env.SUPER_ADMIN_NAME?.trim() || "";
 const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL?.trim().toLowerCase() || "";
 const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || "";
 
-const isProduction = process.env.NODE_ENV === "production";
+const configuredOrigins = [process.env.APP_URL, ...(process.env.CORS_ALLOWED_ORIGINS || "").split(",")]
+  .map((origin) => origin?.trim())
+  .filter((origin): origin is string => Boolean(origin));
+const TRUSTED_ORIGINS = new Set(configuredOrigins.map((origin) => {
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    throw new Error("APP_URL and CORS_ALLOWED_ORIGINS must contain valid origins.");
+  }
+  if (parsed.origin !== origin.replace(/\/$/, "") || parsed.username || parsed.password ||
+      parsed.pathname !== "/" || parsed.search || parsed.hash ||
+      (isProduction && parsed.protocol !== "https:")) {
+    throw new Error("Configured CORS origins must be exact origins without paths, credentials, query strings, or fragments; production origins must use HTTPS.");
+  }
+  return parsed.origin;
+}));
+if (isProduction && TRUSTED_ORIGINS.size === 0) {
+  throw new Error("Configure APP_URL or CORS_ALLOWED_ORIGINS with at least one trusted HTTPS origin in production.");
+}
 const missingAuthConfig = [
-  ...(isProduction ? ["AUTH_SECRET", "ADMIN_PASSWORD", "STAFF_PASSWORD"] : []),
+  ...(isProduction ? ["AUTH_SECRET", "ADMIN_PASSWORD", "STAFF_CREDENTIALS", "SECTOR_ADMIN_CREDENTIALS"] : []),
   ...(["SUPER_ADMIN_NAME", "SUPER_ADMIN_EMAIL", "SUPER_ADMIN_PASSWORD"].some((key) => Boolean(process.env[key]))
     ? ["SUPER_ADMIN_NAME", "SUPER_ADMIN_EMAIL", "SUPER_ADMIN_PASSWORD"].filter((key) => !process.env[key]?.trim())
     : isProduction ? ["SUPER_ADMIN_NAME", "SUPER_ADMIN_EMAIL", "SUPER_ADMIN_PASSWORD"] : []),
@@ -34,9 +57,8 @@ if (SUPER_ADMIN_PASSWORD && SUPER_ADMIN_PASSWORD.length < 12) {
 if (isProduction && Buffer.byteLength(AUTH_SECRET, "utf8") < 32) {
   throw new Error("AUTH_SECRET must contain at least 32 bytes in production.");
 }
-if (isProduction && ["ADMIN_PASSWORD", "STAFF_PASSWORD"].some((key) =>
-  (process.env[key] || "").length < 12)) {
-  throw new Error("ADMIN_PASSWORD and STAFF_PASSWORD must each be at least 12 characters long in production.");
+if (isProduction && ADMIN_PASSWORD.length < 12) {
+  throw new Error("ADMIN_PASSWORD must be at least 12 characters long in production.");
 }
 
 type UserRole = "student" | "warden" | "staff" | "admin" | "college_admin" | "super_admin" | "sector_admin" | "main_admin";
@@ -61,30 +83,6 @@ declare global {
   }
 }
 
-function createAuthToken(user: AuthenticatedUser): string {
-  const payload = Buffer.from(JSON.stringify({ ...user, exp: Date.now() + 8 * 60 * 60 * 1000 })).toString("base64url");
-  const signature = crypto.createHmac("sha256", AUTH_SECRET).update(payload).digest("base64url");
-  return `${payload}.${signature}`;
-}
-
-function readAuthToken(req: express.Request): AuthenticatedUser | null {
-  if (!AUTH_SECRET) return null;
-  const header = req.header("authorization");
-  if (!header?.startsWith("Bearer ")) return null;
-  const token = header.slice(7);
-  const [payload, signature] = token.split(".");
-  if (!payload || !signature) return null;
-  const expected = crypto.createHmac("sha256", AUTH_SECRET).update(payload).digest("base64url");
-  if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
-  try {
-    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as AuthenticatedUser & { exp?: number };
-    if (!parsed.id || !parsed.role || !parsed.exp || parsed.exp < Date.now()) return null;
-    return { id: parsed.studentId || parsed.id, role: parsed.role, rollNumber: parsed.rollNumber, name: parsed.name, email: parsed.email, sector: parsed.sector, department: parsed.department, year: parsed.year, studentId: parsed.studentId || parsed.id };
-  } catch {
-    return null;
-  }
-}
-
 // ==========================================
 // 1. SECURITY & PARSING MIDDLEWARES
 // ==========================================
@@ -96,23 +94,23 @@ app.use((req, res, next) => {
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
   res.setHeader("X-XSS-Protection", "1; mode=block");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  if (isProduction) res.setHeader("Strict-Transport-Security", "max-age=31536000");
   next();
 });
 
-// Safe CORS Middleware (Same-Origin in production, localhost in development)
+// The frontend uses bearer tokens, so credentialed CORS is unnecessary.
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+  res.vary("Origin");
   if (origin) {
-    if (
-      process.env.NODE_ENV !== "production" ||
-      origin.includes("localhost") ||
-      origin.includes("127.0.0.1") ||
-      origin === process.env.APP_URL
-    ) {
+    const isDevelopmentOrigin = !isProduction &&
+      /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d{1,5})?$/.test(origin);
+    if (TRUSTED_ORIGINS.has(origin) || isDevelopmentOrigin) {
       res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Access-Control-Allow-Credentials", "true");
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-user-role, x-auth-token");
+    } else {
+      return res.status(403).json({ error: "Origin is not allowed." });
     }
   }
   if (req.method === "OPTIONS") {
@@ -130,6 +128,25 @@ const COMPLAINTS_JSON_PATH = path.join(DATA_DIR, "complaints.json");
 const NOTIFICATIONS_JSON_PATH = path.join(DATA_DIR, "notifications.json");
 const ADMIN_ACCOUNTS_JSON_PATH = path.join(DATA_DIR, "admin-accounts.json");
 const LOGIN_ATTEMPTS_JSON_PATH = path.join(DATA_DIR, "login-attempts.json");
+const REVOKED_SESSIONS_JSON_PATH = path.join(DATA_DIR, "revoked-sessions.json");
+
+function writeFileAtomically(filePath: string, contents: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, contents, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    fs.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    if (fs.existsSync(temporaryPath)) {
+      try {
+        fs.unlinkSync(temporaryPath);
+      } catch (cleanupError) {
+        console.error("Unable to remove temporary persistence file:", cleanupError);
+      }
+    }
+    throw error;
+  }
+}
 
 type ManagedAdminRole = "super_admin" | "college_admin";
 
@@ -148,6 +165,7 @@ interface ManagedAdminAccount {
 let managedAdminAccounts: ManagedAdminAccount[] = [];
 let managedAdminMutationQueue: Promise<void> = Promise.resolve();
 const loginRateLimitMap = new Map<string, { count: number; resetTime: number }>();
+const revokedSessionHashes = new Map<string, number>();
 
 function withManagedAdminAccountsLock<T>(operation: () => Promise<T> | T): Promise<T> {
   const result = managedAdminMutationQueue.then(operation, operation);
@@ -186,10 +204,7 @@ async function verifyPassword(password: string, encodedHash: string): Promise<bo
 }
 
 function saveManagedAdminAccounts(): void {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const temporaryPath = `${ADMIN_ACCOUNTS_JSON_PATH}.${process.pid}.tmp`;
-  fs.writeFileSync(temporaryPath, JSON.stringify(managedAdminAccounts, null, 2), { encoding: "utf8", mode: 0o600 });
-  fs.renameSync(temporaryPath, ADMIN_ACCOUNTS_JSON_PATH);
+  writeFileAtomically(ADMIN_ACCOUNTS_JSON_PATH, JSON.stringify(managedAdminAccounts, null, 2));
 }
 
 function loadLoginAttempts(): void {
@@ -208,11 +223,27 @@ function loadLoginAttempts(): void {
 }
 
 function saveLoginAttempts(): void {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const temporaryPath = `${LOGIN_ATTEMPTS_JSON_PATH}.${process.pid}.tmp`;
   const entries = Array.from(loginRateLimitMap, ([key, attempt]) => ({ key, ...attempt }));
-  fs.writeFileSync(temporaryPath, JSON.stringify(entries), { encoding: "utf8", mode: 0o600 });
-  fs.renameSync(temporaryPath, LOGIN_ATTEMPTS_JSON_PATH);
+  writeFileAtomically(LOGIN_ATTEMPTS_JSON_PATH, JSON.stringify(entries));
+}
+
+function loadRevokedSessions(): void {
+  if (!fs.existsSync(REVOKED_SESSIONS_JSON_PATH)) return;
+  const parsed: unknown = JSON.parse(fs.readFileSync(REVOKED_SESSIONS_JSON_PATH, "utf8"));
+  if (!Array.isArray(parsed) || parsed.some((entry) =>
+    !entry || typeof entry.hash !== "string" || !/^[a-f0-9]{64}$/.test(entry.hash) ||
+    !Number.isFinite(entry.expiresAt))) {
+    throw new Error("The persisted revoked-session store is invalid; refusing to start.");
+  }
+  const now = Date.now();
+  for (const entry of parsed) {
+    if (entry.expiresAt > now) revokedSessionHashes.set(entry.hash, entry.expiresAt);
+  }
+}
+
+function saveRevokedSessions(): void {
+  const entries = Array.from(revokedSessionHashes, ([hash, expiresAt]) => ({ hash, expiresAt }));
+  writeFileAtomically(REVOKED_SESSIONS_JSON_PATH, JSON.stringify(entries));
 }
 
 async function initializeManagedAdminAccounts(): Promise<void> {
@@ -349,7 +380,7 @@ function initStorage() {
       "STU004,2022CSB1044,rahul.sharma@campus.edu.in,9876543210,true,2026-08-15",
       "STU005,2022IT089,adheshwari.gupta@college.edu.in,9765432109,true,2026-08-15"
     ].join("\n") + "\n";
-    fs.writeFileSync(STUDENTS_CSV_PATH, header + initialRows, "utf8");
+    writeFileAtomically(STUDENTS_CSV_PATH, header + initialRows);
   }
 }
 
@@ -379,7 +410,7 @@ function readStudentsFromCsv(): StudentCSVItem[] {
     return students;
   } catch (err) {
     console.error("Error reading students.csv:", err);
-    return [];
+    throw err;
   }
 }
 
@@ -438,7 +469,7 @@ function saveStudentToCsv(data: {
       `${escapeCsvField(s.student_id)},${escapeCsvField(s.roll_number)},${escapeCsvField(s.email)},${escapeCsvField(s.phone)},${escapeCsvField(s.email_verified)},${escapeCsvField(s.registration_date)}`
     ).join("\n") + "\n";
 
-    fs.writeFileSync(STUDENTS_CSV_PATH, header + rows, "utf8");
+    writeFileAtomically(STUDENTS_CSV_PATH, header + rows);
     return { student: existing, isNew: false };
   }
 
@@ -452,8 +483,11 @@ function saveStudentToCsv(data: {
     registration_date: today
   };
 
-  const line = `${escapeCsvField(newStudent.student_id)},${escapeCsvField(newStudent.roll_number)},${escapeCsvField(newStudent.email)},${escapeCsvField(newStudent.phone)},${escapeCsvField(newStudent.email_verified)},${escapeCsvField(newStudent.registration_date)}\n`;
-  fs.appendFileSync(STUDENTS_CSV_PATH, line, "utf8");
+  const header = "student_id,roll_number,email,phone,email_verified,registration_date\n";
+  const rows = [...students, newStudent].map((student) =>
+    `${escapeCsvField(student.student_id)},${escapeCsvField(student.roll_number)},${escapeCsvField(student.email)},${escapeCsvField(student.phone)},${escapeCsvField(student.email_verified)},${escapeCsvField(student.registration_date)}`
+  ).join("\n") + "\n";
+  writeFileAtomically(STUDENTS_CSV_PATH, header + rows);
 
   return { student: newStudent, isNew: true };
 }
@@ -479,6 +513,8 @@ interface UserPayload {
   role: UserRole;
   sector?: string;
   department?: string;
+  authSource?: "demo" | "static";
+  credentialVersion?: string;
   exp: number;
 }
 
@@ -493,24 +529,14 @@ function generateAuthToken(user: Omit<UserPayload, "exp">): string {
   return `${dataB64}.${signature}`;
 }
 
+function credentialVersion(password: string): string {
+  return crypto.createHmac("sha256", AUTH_SECRET).update(password).digest("hex");
+}
+
 // Verify HMAC-SHA256 signed session token
 function verifyAuthToken(token: string): UserPayload | null {
   try {
     if (!token) return null;
-
-    // Support demo session tokens in DEMO_MODE only
-    if (IS_DEMO_MODE && token.startsWith("auth_jwt_")) {
-      const roll = token.split("_")[2] || "23AIML001";
-      const academic = studentAcademicDirectory[roll] || { name: "Demo Student", department: "CSE", year: "2nd Year" };
-      return {
-        studentId: `STU-${roll}`,
-        rollNumber: roll,
-        email: `${roll.toLowerCase()}@college.edu.in`,
-        name: academic.name,
-        role: "student",
-        exp: Date.now() + 3600000
-      };
-    }
 
     const parts = token.split(".");
     if (parts.length !== 2) return null;
@@ -525,6 +551,18 @@ function verifyAuthToken(token: string): UserPayload | null {
     const payload: UserPayload = JSON.parse(Buffer.from(dataB64, "base64url").toString("utf8"));
     const validRoles: UserRole[] = ["student", "warden", "staff", "admin", "college_admin", "super_admin", "sector_admin", "main_admin"];
     if (!payload.exp || Date.now() > payload.exp || !validRoles.includes(payload.role) || !payload.email) return null;
+    if (payload.authSource === "demo" && !IS_DEMO_MODE) return null;
+    if (payload.authSource === "static") {
+      const password = payload.role === "warden" || payload.role === "staff"
+        ? STAFF_ACCOUNTS[payload.email]?.password || ""
+        : payload.role === "sector_admin"
+          ? SECTOR_ADMIN_CREDENTIALS[payload.email] || ""
+          : payload.role === "main_admin"
+            ? ADMIN_PASSWORD
+          : "";
+      if (!password || payload.credentialVersion !== credentialVersion(password)) return null;
+    }
+    if (payload.authSource !== undefined && payload.authSource !== "demo" && payload.authSource !== "static") return null;
 
     return payload;
   } catch (err) {
@@ -532,14 +570,25 @@ function verifyAuthToken(token: string): UserPayload | null {
   }
 }
 
+function authTokenFromRequest(req: express.Request): string | null {
+  const authHeader = req.headers.authorization || (req.headers["x-auth-token"] as string);
+  return authHeader ? (authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader) : null;
+}
+
 // Authentication Middleware: Verifies session token
 function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const authHeader = req.headers.authorization || (req.headers["x-auth-token"] as string);
-  const token = authHeader ? (authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader) : null;
+  const token = authTokenFromRequest(req);
 
   if (!token) {
     return res.status(401).json({ error: "Authentication required. Please log in to access this resource." });
   }
+
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const revokedUntil = revokedSessionHashes.get(tokenHash);
+  if (revokedUntil && revokedUntil > Date.now()) {
+    return res.status(401).json({ error: "This session has been logged out. Please log in again." });
+  }
+  if (revokedUntil) revokedSessionHashes.delete(tokenHash);
 
   const user = verifyAuthToken(token);
   if (!user) {
@@ -554,17 +603,6 @@ function requireAuth(req: express.Request, res: express.Response, next: express.
   }
 
   req.user = user;
-  next();
-}
-
-// Optional Auth Middleware (attaches user if token is present)
-function optionalAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const authHeader = req.headers.authorization || (req.headers["x-auth-token"] as string);
-  const token = authHeader ? (authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader) : null;
-  if (token) {
-    const user = verifyAuthToken(token);
-    if (user) req.user = user;
-  }
   next();
 }
 
@@ -595,13 +633,14 @@ function requireSuperAdmin(req: express.Request, res: express.Response, next: ex
   return res.status(403).json({ error: "Access denied. Super Administrator privileges required." });
 }
 
-// Login failures are persisted under DATA_DIR; AI request limits remain process-local.
+// Authentication and administrator-action limits persist under DATA_DIR; AI limits remain process-local.
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
 
 function rateLimitLogin(req: express.Request, res: express.Response, next: express.NextFunction) {
   const now = Date.now();
   const ip = req.ip || req.socket.remoteAddress || "unknown";
-  const key = crypto.createHmac("sha256", AUTH_SECRET).update(ip).digest("hex");
+  const scope = req.path === "/api/auth/send-otp" || req.path === "/api/auth/verify-otp" ? "otp" : "login";
+  const key = crypto.createHmac("sha256", AUTH_SECRET).update(`${scope}:${ip}`).digest("hex");
   let expired = false;
   for (const [storedKey, attempt] of loginRateLimitMap) {
     if (now >= attempt.resetTime) {
@@ -619,18 +658,43 @@ function rateLimitLogin(req: express.Request, res: express.Response, next: expre
   if (!limit && loginRateLimitMap.size >= 10000) {
     return res.status(503).json({ error: "Login is temporarily unavailable. Please try again later." });
   }
+  loginRateLimitMap.set(key, limit && now < limit.resetTime
+    ? { count: limit.count + 1, resetTime: limit.resetTime }
+    : { count: 1, resetTime: now + 15 * 60 * 1000 });
+  try {
+    saveLoginAttempts();
+  } catch (error) {
+    loginRateLimitMap.delete(key);
+    console.error("Unable to persist authentication rate limits:", error);
+    return res.status(503).json({ error: "Authentication is temporarily unavailable. Please try again later." });
+  }
   next();
 }
 
-function recordLoginFailure(req: express.Request): void {
+function rateLimitAdminMutation(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const identity = req.user?.studentId || req.user?.id || req.user?.email;
+  if (!identity) return res.status(401).json({ error: "Authentication required." });
+
   const now = Date.now();
-  const ip = req.ip || req.socket.remoteAddress || "unknown";
-  const key = crypto.createHmac("sha256", AUTH_SECRET).update(ip).digest("hex");
+  const key = crypto.createHmac("sha256", AUTH_SECRET).update(`admin-mutation:${identity}`).digest("hex");
   const current = loginRateLimitMap.get(key);
+  if (current && now < current.resetTime && current.count >= 10) {
+    res.setHeader("Retry-After", String(Math.ceil((current.resetTime - now) / 1000)));
+    return res.status(429).json({ error: "Too many administrator account changes. Please try again later." });
+  }
+  const priorValue = current ? { ...current } : undefined;
   loginRateLimitMap.set(key, current && now < current.resetTime
-    ? { count: Math.min(current.count + 1, 10), resetTime: current.resetTime }
+    ? { count: current.count + 1, resetTime: current.resetTime }
     : { count: 1, resetTime: now + 15 * 60 * 1000 });
-  saveLoginAttempts();
+  try {
+    saveLoginAttempts();
+  } catch (error) {
+    if (priorValue) loginRateLimitMap.set(key, priorValue);
+    else loginRateLimitMap.delete(key);
+    console.error("Unable to persist administrator action rate limits:", error);
+    return res.status(503).json({ error: "Administrator account changes are temporarily unavailable." });
+  }
+  next();
 }
 
 function rateLimitAI(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -667,18 +731,6 @@ interface OTPRecord {
 }
 const activeOtps = new Map<string, OTPRecord>();
 
-function sendOTP(email: string, otp: string, rollNumber?: string): boolean {
-  console.log(`\n========================================================`);
-  console.log(`[CAMPUSCARE EMAIL SERVICE] Dispatched OTP Code`);
-  console.log(`Recipient: ${email} ${rollNumber ? `(Roll: ${rollNumber})` : ""}`);
-  console.log(`Subject: Your Student Portal Verification Code`);
-  console.log(`--------------------------------------------------------`);
-  console.log(`Your verification code is: ${otp}`);
-  console.log(`This OTP will expire in 5 minutes.`);
-  console.log(`========================================================\n`);
-  return true;
-}
-
 function maskEmail(email: string): string {
   const parts = email.split("@");
   if (parts.length !== 2) return email;
@@ -704,7 +756,7 @@ function getGeminiClient(): GoogleGenAI | null {
 // ==========================================
 function mapCategoryToSector(category: string, text: string): string {
   const lower = (category + " " + text).toLowerCase();
-  if (lower.includes("wi-fi") || lower.includes("wifi") || lower.includes("internet") || lower.includes("network") || lower.includes("router") || lower.includes("computer lab") || lower.includes("computer") || lower.includes("lab") || lower.includes("it")) {
+  if (lower.includes("wi-fi") || lower.includes("wifi") || lower.includes("internet") || lower.includes("network") || lower.includes("router") || lower.includes("computer lab") || lower.includes("computer") || lower.includes("lab") || /(^|[^a-z0-9])it([^a-z0-9]|$)/.test(lower)) {
     return "IT";
   }
   if (lower.includes("electric") || lower.includes("power") || lower.includes("fan") || lower.includes("light") || lower.includes("switch") || lower.includes("wire") || lower.includes("socket") || lower.includes("wiring")) {
@@ -1039,7 +1091,7 @@ function loadComplaints(): DBComplaint[] {
 function saveComplaints() {
   try {
     initStorage();
-    fs.writeFileSync(COMPLAINTS_JSON_PATH, JSON.stringify(complaints, null, 2), "utf8");
+    writeFileAtomically(COMPLAINTS_JSON_PATH, JSON.stringify(complaints, null, 2));
   } catch (err) {
     console.error("Error persisting complaints.json:", err);
     throw err;
@@ -1076,7 +1128,7 @@ function loadNotifications(): DBNotification[] {
 function saveNotifications() {
   try {
     initStorage();
-    fs.writeFileSync(NOTIFICATIONS_JSON_PATH, JSON.stringify(notifications, null, 2), "utf8");
+    writeFileAtomically(NOTIFICATIONS_JSON_PATH, JSON.stringify(notifications, null, 2));
   } catch (err) {
     console.error("Error persisting notifications.json:", err);
     throw err;
@@ -1104,8 +1156,30 @@ app.get("/api/auth/session", requireAuth, (req, res) => {
   });
 });
 
-// Send OTP
-app.post("/api/auth/send-otp", (req, res) => {
+app.post("/api/auth/logout", requireAuth, (req, res) => {
+  const token = authTokenFromRequest(req);
+  if (!token) return res.status(401).json({ error: "Authentication required." });
+  const payload = verifyAuthToken(token);
+  if (!payload) return res.status(401).json({ error: "Invalid or expired session." });
+
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const now = Date.now();
+  for (const [hash, expiresAt] of revokedSessionHashes) {
+    if (expiresAt <= now) revokedSessionHashes.delete(hash);
+  }
+  revokedSessionHashes.set(tokenHash, payload.exp);
+  try {
+    saveRevokedSessions();
+  } catch (error) {
+    revokedSessionHashes.delete(tokenHash);
+    console.error("Unable to persist logged-out session:", error);
+    return res.status(500).json({ error: "Unable to complete logout. Please retry." });
+  }
+  return res.json({ success: true });
+});
+
+// Send OTP (demo only until a real mail delivery provider is configured)
+app.post("/api/auth/send-otp", rateLimitLogin, (req, res) => {
   const { rollNumber, email, phone } = req.body;
 
   // 1. Validate Roll Number
@@ -1140,6 +1214,17 @@ app.post("/api/auth/send-otp", (req, res) => {
     return res.status(400).json({ error: "Please enter a valid 10-digit mobile phone number (without country code)." });
   }
 
+  if (!IS_DEMO_MODE) {
+    return res.status(503).json({ error: "Student email verification is unavailable because no email delivery provider is configured." });
+  }
+
+  const registeredStudents = readStudentsFromCsv();
+  const registeredByRoll = registeredStudents.find((student) => student.roll_number.toUpperCase() === cleanRoll);
+  const registeredByEmail = registeredStudents.find((student) => student.email.toLowerCase() === cleanEmail);
+  if ((registeredByRoll && registeredByRoll.email.toLowerCase() !== cleanEmail) ||
+      (registeredByEmail && registeredByEmail.roll_number.toUpperCase() !== cleanRoll)) {
+    return res.status(403).json({ error: "The roll number and registered college email do not match." });
+  }
   // 4. Rate Limiting: 20 seconds between resends
   const existingOtp = activeOtps.get(cleanRoll);
   const now = Date.now();
@@ -1161,7 +1246,6 @@ app.post("/api/auth/send-otp", (req, res) => {
     createdAt: now
   });
 
-  sendOTP(cleanEmail, generatedOtp, cleanRoll);
   const masked = maskEmail(cleanEmail);
 
   return res.json({
@@ -1204,6 +1288,7 @@ app.post("/api/auth/demo-login", (req, res) => {
       name: demoAccount.name,
       role: demoAccount.role,
       department: demoAccount.department,
+      authSource: "demo",
     });
     return res.json({
       success: true,
@@ -1266,10 +1351,9 @@ app.post("/api/auth/demo-login", (req, res) => {
     rollNumber: csvRecord.roll_number,
     email: csvRecord.email,
     name: academic.name,
-    role: "student"
+    role: "student",
+    authSource: "demo",
   });
-
-  console.log(`[AUTH] Demo Student Authenticated: ${csvRecord.student_id} (${cleanRoll} - ${academic.name})`);
 
   return res.json({
     success: true,
@@ -1281,7 +1365,7 @@ app.post("/api/auth/demo-login", (req, res) => {
 });
 
 // 2. Real OTP Verification (Strict & Cryptographically Verified)
-app.post("/api/auth/verify-otp", (req, res) => {
+app.post("/api/auth/verify-otp", rateLimitLogin, (req, res) => {
   const { rollNumber, otp, email, phone } = req.body;
 
   if (!rollNumber || !otp || typeof rollNumber !== "string" || typeof otp !== "string") {
@@ -1356,10 +1440,9 @@ app.post("/api/auth/verify-otp", (req, res) => {
     rollNumber: csvRecord.roll_number,
     email: csvRecord.email,
     name: academic.name,
-    role: "student"
+    role: "student",
+    authSource: "demo",
   });
-
-  console.log(`[AUTH] Student authenticated via real OTP: ${csvRecord.student_id} (${csvRecord.roll_number})`);
 
   return res.json({
     success: true,
@@ -1392,26 +1475,63 @@ const SECTOR_ADMIN_MAP: Record<string, { name: string; sector: string }> = {
   "general.admin@college.edu": { name: "General Admin", sector: "General Administration" }
 };
 
+function parseCredentialMap(
+  raw: string | undefined,
+  label: string,
+  allowedEmails: string[]
+): Record<string, string> {
+  if (!raw?.trim()) {
+    if (isProduction) throw new Error(`${label} is required in production.`);
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${label} must be a JSON object keyed by account email.`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must be a JSON object keyed by account email.`);
+  }
+
+  const entries = Object.entries(parsed);
+  const allowed = new Set(allowedEmails);
+  if (entries.some(([email, password]) =>
+    email !== normalizeEmail(email) || !allowed.has(email) ||
+    typeof password !== "string" || password.length < (isProduction ? 12 : 1))) {
+    throw new Error(`${label} contains an unsupported account or invalid password.`);
+  }
+  if (new Set(entries.map(([, password]) => password)).size !== entries.length) {
+    throw new Error(`${label} passwords must be unique for every account.`);
+  }
+  if (isProduction && entries.length !== allowed.size) {
+    throw new Error(`${label} must configure a unique password for every supported account.`);
+  }
+  return Object.fromEntries(entries);
+}
+
+const SECTOR_ADMIN_CREDENTIALS = parseCredentialMap(
+  process.env.SECTOR_ADMIN_CREDENTIALS,
+  "SECTOR_ADMIN_CREDENTIALS",
+  Object.keys(SECTOR_ADMIN_MAP)
+);
+
 const handleAdminLogin = async (req: express.Request, res: express.Response) => {
   const { email, password } = req.body;
 
   if (!email || typeof email !== "string" || !email.includes("@")) {
-    recordLoginFailure(req);
     return res.status(400).json({ error: "Please enter a valid email address." });
   }
 
   if (!password || typeof password !== "string" || password.length < 1) {
-    recordLoginFailure(req);
     return res.status(400).json({ error: "Please enter your password." });
   }
 
-  const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@college.edu").toLowerCase();
-  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
   const cleanEmail = normalizeEmail(email);
   const managedAccount = managedAdminAccounts.find((account) => normalizeEmail(account.email) === cleanEmail);
   if (managedAccount) {
     if (!managedAccount.active || !(await verifyPassword(password, managedAccount.passwordHash))) {
-      recordLoginFailure(req);
       return res.status(401).json({ error: "Invalid admin credentials." });
     }
     const token = generateAuthToken({
@@ -1440,13 +1560,11 @@ const handleAdminLogin = async (req: express.Request, res: express.Response) => 
   if (cleanEmail === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
     role = "main_admin";
     name = "Main Administrator";
-  } else if (SECTOR_ADMIN_MAP[cleanEmail] && password === ADMIN_PASSWORD) {
+  } else if (SECTOR_ADMIN_MAP[cleanEmail] && SECTOR_ADMIN_CREDENTIALS[cleanEmail] === password) {
     role = "sector_admin";
     sector = SECTOR_ADMIN_MAP[cleanEmail].sector;
     name = SECTOR_ADMIN_MAP[cleanEmail].name;
   } else {
-    console.log(`[AUTH] Failed admin login attempt: ${cleanEmail}`);
-    recordLoginFailure(req);
     return res.status(401).json({ error: "Invalid admin credentials." });
   }
 
@@ -1456,10 +1574,10 @@ const handleAdminLogin = async (req: express.Request, res: express.Response) => 
     email: cleanEmail,
     role,
     sector,
-    name
+    name,
+    authSource: "static",
+    credentialVersion: credentialVersion(role === "main_admin" ? ADMIN_PASSWORD : SECTOR_ADMIN_CREDENTIALS[cleanEmail]),
   });
-
-  console.log(`[AUTH] Admin authenticated: ${cleanEmail} (Role: ${role}, Sector: ${sector || 'ALL'})`);
 
   return res.json({
     success: true,
@@ -1472,18 +1590,41 @@ const handleAdminLogin = async (req: express.Request, res: express.Response) => 
   });
 };
 
-const STAFF_ACCOUNTS: Record<string, { password: string; id: string; name: string; role: "warden" | "staff"; department: string }> = {
-  "warden@college.edu": { password: process.env.STAFF_PASSWORD || "", id: "warden-a", name: "Hostel Warden", role: "warden", department: "Hostel / Warden" },
-  "maintenance@college.edu": { password: process.env.STAFF_PASSWORD || "", id: "maintenance-staff", name: "Maintenance Staff", role: "staff", department: "Room Maintenance" },
-  "it.staff@college.edu": { password: process.env.STAFF_PASSWORD || "", id: "it-admin", name: "IT Admin", role: "staff", department: "IT / Network" },
-  "electrical@college.edu": { password: process.env.STAFF_PASSWORD || "", id: "electrical-staff", name: "Electrical Staff", role: "staff", department: "Electrical" },
+const STAFF_ACCOUNT_DEFINITIONS: Record<string, { id: string; name: string; role: "warden" | "staff"; department: string }> = {
+  "warden@college.edu": { id: "warden-a", name: "Hostel Warden", role: "warden", department: "Hostel / Warden" },
+  "maintenance@college.edu": { id: "maintenance-staff", name: "Maintenance Staff", role: "staff", department: "Room Maintenance" },
+  "it.staff@college.edu": { id: "it-admin", name: "IT Admin", role: "staff", department: "IT / Network" },
+  "electrical@college.edu": { id: "electrical-staff", name: "Electrical Staff", role: "staff", department: "Electrical" },
 };
+
+const STAFF_CREDENTIALS = parseCredentialMap(
+  process.env.STAFF_CREDENTIALS,
+  "STAFF_CREDENTIALS",
+  Object.keys(STAFF_ACCOUNT_DEFINITIONS)
+);
+const STAFF_ACCOUNTS: Record<string, { password: string; id: string; name: string; role: "warden" | "staff"; department: string }> =
+  Object.fromEntries(Object.entries(STAFF_ACCOUNT_DEFINITIONS).map(([email, account]) => [
+  email,
+  {
+    ...account,
+    password: STAFF_CREDENTIALS[email] || (IS_DEMO_MODE ? STAFF_PASSWORD : ""),
+  },
+]));
+
+const configuredStaticPasswords = [
+  ADMIN_PASSWORD,
+  SUPER_ADMIN_PASSWORD,
+  ...Object.values(SECTOR_ADMIN_CREDENTIALS),
+  ...Object.values(STAFF_CREDENTIALS),
+].filter(Boolean);
+if (new Set(configuredStaticPasswords).size !== configuredStaticPasswords.length) {
+  throw new Error("System, sector-admin, and staff account passwords must be unique.");
+}
 
 app.post("/api/auth/staff-login", rateLimitLogin, (req, res) => {
   const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
   const account = STAFF_ACCOUNTS[email];
   if (!account || !account.password || typeof req.body.password !== "string" || req.body.password !== account.password) {
-    recordLoginFailure(req);
     return res.status(401).json({ error: "Invalid staff credentials." });
   }
   const token = generateAuthToken({
@@ -1493,6 +1634,8 @@ app.post("/api/auth/staff-login", rateLimitLogin, (req, res) => {
     name: account.name,
     role: account.role,
     department: account.department,
+    authSource: "static",
+    credentialVersion: credentialVersion(account.password),
   });
   res.json({
     success: true,
@@ -1521,7 +1664,7 @@ app.get("/api/admin/accounts", requireAuth, requireSuperAdmin, (_req, res) => {
   res.json({ accounts: managedAdminAccounts.map(publicAdminAccount) });
 });
 
-app.post("/api/admin/accounts", requireAuth, requireSuperAdmin, async (req, res) => {
+app.post("/api/admin/accounts", requireAuth, requireSuperAdmin, rateLimitAdminMutation, async (req, res) => {
   const { name, email, password, role } = req.body;
   if (role !== undefined && role !== "college_admin") {
     return res.status(403).json({ error: "Only College Admin accounts can be created through this endpoint." });
@@ -1575,7 +1718,7 @@ app.post("/api/admin/accounts", requireAuth, requireSuperAdmin, async (req, res)
   });
 });
 
-app.post("/api/admin/accounts/change-password", requireAuth, requireSuperAdmin, async (req, res) => {
+app.post("/api/admin/accounts/change-password", requireAuth, requireSuperAdmin, rateLimitAdminMutation, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   if (typeof currentPassword !== "string" || !currentPassword ||
       typeof newPassword !== "string" || newPassword.length < 12 || newPassword.length > 200) {
@@ -1604,7 +1747,7 @@ app.post("/api/admin/accounts/change-password", requireAuth, requireSuperAdmin, 
   });
 });
 
-app.patch("/api/admin/accounts/:id", requireAuth, requireSuperAdmin, async (req, res) => {
+app.patch("/api/admin/accounts/:id", requireAuth, requireSuperAdmin, rateLimitAdminMutation, async (req, res) => {
   if (typeof req.body.active !== "boolean" || req.body.role !== undefined) {
     return res.status(400).json({ error: "Only the account active state can be changed." });
   }
@@ -1629,7 +1772,7 @@ app.patch("/api/admin/accounts/:id", requireAuth, requireSuperAdmin, async (req,
   });
 });
 
-app.post("/api/admin/accounts/:id/reset-password", requireAuth, requireSuperAdmin, async (req, res) => {
+app.post("/api/admin/accounts/:id/reset-password", requireAuth, requireSuperAdmin, rateLimitAdminMutation, async (req, res) => {
   const { password } = req.body;
   if (typeof password !== "string" || password.length < 12 || password.length > 200) {
     return res.status(400).json({ error: "Passwords must be between 12 and 200 characters." });
@@ -1892,9 +2035,9 @@ app.patch("/api/complaints/:id/resolve", requireAuth, requireAdmin, (req, res) =
   if (existing.status === "Resolved") {
     return res.json({ success: true, complaint: existing, message: `Complaint #${existing.id} is already resolved.` });
   }
-  const { author, resolutionNote } = req.body;
+  const { resolutionNote } = req.body;
   const now = new Date().toISOString();
-  const effectiveAuthor = author || "Super Administrator";
+  const effectiveAuthor = req.user!.name || "Administrator";
 
   existing.status = "Resolved";
   existing.resolvedAt = now;
@@ -1952,7 +2095,7 @@ const handleUpdateComplaint = (req: express.Request, res: express.Response) => {
   }
 
   const existing = complaints[index];
-  const { status, priority, department, assignedTo, assignedOfficerRole, assignedAdminId, assignedAdminName, overrideNote, newComment, author } = req.body;
+  const { status, priority, department, assignedTo, assignedOfficerRole, assignedAdminId, assignedAdminName, overrideNote, newComment } = req.body;
   const now = new Date().toISOString();
   const user = req.user!;
   const userRole = user.role;
@@ -2011,7 +2154,7 @@ const handleUpdateComplaint = (req: express.Request, res: express.Response) => {
       title: `Status Changed to ${status}`,
       description: overrideNote ? String(overrideNote).slice(0, 300) : `Status updated to ${status} by administrator.`,
       timestamp: now,
-      actor: author || user?.name || "Administrator"
+      actor: user.name || "Administrator"
     });
 
     addNotification({
@@ -2036,7 +2179,7 @@ const handleUpdateComplaint = (req: express.Request, res: express.Response) => {
       title: `Priority Updated to ${priority}`,
       description: existing.overrideNote,
       timestamp: now,
-      actor: author || user?.name || "Administrator"
+      actor: user.name || "Administrator"
     });
   }
 
@@ -2053,7 +2196,7 @@ const handleUpdateComplaint = (req: express.Request, res: express.Response) => {
       title: `Assigned to ${existing.assignedTo}`,
       description: `Task assigned to ${existing.assignedTo} (${existing.assignedOfficerRole})`,
       timestamp: now,
-      actor: author || user?.name || "Administrator"
+      actor: user.name || "Administrator"
     });
     addNotification({
       recipientType: "student",
@@ -2080,7 +2223,7 @@ const handleUpdateComplaint = (req: express.Request, res: express.Response) => {
     const cleanComment = newComment.trim().slice(0, 1000);
     existing.comments.push({
       id: `comm-${Date.now()}`,
-      author: author || user?.name || "User",
+      author: user.name || "User",
       role: isAdmin ? "admin" : userRole === "student" ? "student" : "officer",
       message: cleanComment,
       timestamp: now
@@ -2938,6 +3081,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 async function startServer() {
   loadLoginAttempts();
+  loadRevokedSessions();
   await initializeManagedAdminAccounts();
 
   if (process.env.NODE_ENV !== "production") {
