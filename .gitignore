@@ -8,3 +8,5 @@ coverage/
 !.env.example
 data/complaints.json
 data/notifications.json
+data/admin-accounts.json*
+data/login-attempts.json*

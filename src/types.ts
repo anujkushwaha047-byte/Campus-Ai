@@ -55,7 +55,7 @@ export type ComplaintStatus =
   | 'Resolved'
   | 'Rejected';
 
-export type UserRole = 'student' | 'sector_admin' | 'main_admin';
+export type UserRole = 'student' | 'sector_admin' | 'main_admin' | 'super_admin' | 'college_admin';
 
 export interface TimelineItem {
   id: string;

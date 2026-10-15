@@ -31,11 +31,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowe
       if (!response.ok) throw new Error(data.error || "Unable to verify your session.");
       const verifiedRole = data.user?.role as string | undefined;
       if (!verifiedRole) throw new Error("The server returned an invalid session role.");
+      const validRoles: AppRole[] = ["student", "admin", "main_admin", "super_admin", "college_admin", "warden", "staff", "sector_admin"];
+      if (!validRoles.includes(verifiedRole as AppRole)) throw new Error("The server returned an invalid session role.");
       const normalizedRole: AppRole = verifiedRole === "main_admin" || verifiedRole === "sector_admin"
         ? "admin"
-        : verifiedRole === "warden" || verifiedRole === "staff"
-          ? verifiedRole
-          : "student";
+        : verifiedRole as AppRole;
       if (active) {
         setRole(normalizedRole);
         setStatus("verified");

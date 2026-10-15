@@ -2,10 +2,14 @@ services:
   - type: web
     name: campus-ai
     env: node
-    plan: free
+    plan: starter
     buildCommand: bun install && bun run build
     startCommand: bun run start
     healthCheckPath: /api/health
+    disk:
+      name: campus-ai-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
@@ -13,9 +17,17 @@ services:
         value: "false"
       - key: ALLOWED_COLLEGE_EMAIL_DOMAIN
         value: .edu.in
+      - key: DATA_DIR
+        value: /var/data
       - key: AUTH_SECRET
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
       - key: STAFF_PASSWORD
+        sync: false
+      - key: SUPER_ADMIN_NAME
+        sync: false
+      - key: SUPER_ADMIN_EMAIL
+        sync: false
+      - key: SUPER_ADMIN_PASSWORD
         sync: false

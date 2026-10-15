@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Filter, Search, LogOut, AlertTriangle, CheckCircle, Clock, FileText, Eye } from 'lucide-react';
 import { apiGet, apiPost, apiPut } from '../api';
-import { Complaint, ComplaintStatus, Priority } from '../types';
+import { Complaint, ComplaintStatus, Priority, StudentProfile } from '../types';
 import { clearStoredAuth } from '../utils/auth';
 import { ComplaintDetailsModal } from '../components/ComplaintDetailsModal';
+import { AdminAccountsPanel } from '../components/AdminAccountsPanel';
 
 const ALL_SECTORS = [
   'All',
@@ -26,7 +27,7 @@ const ALL_SECTORS = [
   'General Administration'
 ];
 
-const AdminDashboard: React.FC = () => {
+const AdminDashboard: React.FC<{ profile: StudentProfile }> = ({ profile }) => {
   const navigate = useNavigate();
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
@@ -161,6 +162,8 @@ const AdminDashboard: React.FC = () => {
           Logout
         </button>
       </header>
+
+      {profile.role === 'super_admin' && <AdminAccountsPanel />}
 
       {error && (
         <div className="mb-6 p-4 bg-red-950/60 border border-red-800 text-red-300 rounded-xl flex items-center gap-3">

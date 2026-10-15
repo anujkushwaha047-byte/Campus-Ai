@@ -9,21 +9,41 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", 1);
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const AUTH_SECRET = process.env.AUTH_SECRET || (process.env.NODE_ENV === "production" ? "" : crypto.randomBytes(32).toString("hex"));
 const IS_DEMO_MODE = process.env.NODE_ENV !== "production" && process.env.DEMO_MODE !== "false";
+const SUPER_ADMIN_NAME = process.env.SUPER_ADMIN_NAME?.trim() || "";
+const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL?.trim().toLowerCase() || "";
+const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || "";
 
-if (process.env.NODE_ENV === "production") {
-  const missingAuthConfig = ["AUTH_SECRET", "ADMIN_PASSWORD", "STAFF_PASSWORD"].filter((key) => !process.env[key]);
-  if (missingAuthConfig.length > 0) {
-    throw new Error(`Missing required production environment variables: ${missingAuthConfig.join(", ")}`);
-  }
+const isProduction = process.env.NODE_ENV === "production";
+const missingAuthConfig = [
+  ...(isProduction ? ["AUTH_SECRET", "ADMIN_PASSWORD", "STAFF_PASSWORD"] : []),
+  ...(["SUPER_ADMIN_NAME", "SUPER_ADMIN_EMAIL", "SUPER_ADMIN_PASSWORD"].some((key) => Boolean(process.env[key]))
+    ? ["SUPER_ADMIN_NAME", "SUPER_ADMIN_EMAIL", "SUPER_ADMIN_PASSWORD"].filter((key) => !process.env[key]?.trim())
+    : isProduction ? ["SUPER_ADMIN_NAME", "SUPER_ADMIN_EMAIL", "SUPER_ADMIN_PASSWORD"] : []),
+].filter((key, index, keys) => keys.indexOf(key) === index)
+  .filter((key) => !process.env[key]?.trim());
+if (missingAuthConfig.length > 0) {
+  throw new Error(`Missing required authentication environment variables: ${missingAuthConfig.join(", ")}`);
+}
+if (SUPER_ADMIN_PASSWORD && SUPER_ADMIN_PASSWORD.length < 12) {
+  throw new Error("SUPER_ADMIN_PASSWORD must be at least 12 characters long.");
+}
+if (isProduction && Buffer.byteLength(AUTH_SECRET, "utf8") < 32) {
+  throw new Error("AUTH_SECRET must contain at least 32 bytes in production.");
+}
+if (isProduction && ["ADMIN_PASSWORD", "STAFF_PASSWORD"].some((key) =>
+  (process.env[key] || "").length < 12)) {
+  throw new Error("ADMIN_PASSWORD and STAFF_PASSWORD must each be at least 12 characters long in production.");
 }
 
-type UserRole = "student" | "warden" | "staff" | "admin" | "sector_admin" | "main_admin";
+type UserRole = "student" | "warden" | "staff" | "admin" | "college_admin" | "super_admin" | "sector_admin" | "main_admin";
 interface AuthenticatedUser {
   id?: string;
   role: UserRole;
+  accountVersion?: number;
   rollNumber?: string;
   name?: string;
   email?: string;
@@ -108,6 +128,164 @@ const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const STUDENTS_CSV_PATH = path.join(DATA_DIR, "students.csv");
 const COMPLAINTS_JSON_PATH = path.join(DATA_DIR, "complaints.json");
 const NOTIFICATIONS_JSON_PATH = path.join(DATA_DIR, "notifications.json");
+const ADMIN_ACCOUNTS_JSON_PATH = path.join(DATA_DIR, "admin-accounts.json");
+const LOGIN_ATTEMPTS_JSON_PATH = path.join(DATA_DIR, "login-attempts.json");
+
+type ManagedAdminRole = "super_admin" | "college_admin";
+
+interface ManagedAdminAccount {
+  id: string;
+  name: string;
+  email: string;
+  role: ManagedAdminRole;
+  passwordHash: string;
+  active: boolean;
+  tokenVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+let managedAdminAccounts: ManagedAdminAccount[] = [];
+let managedAdminMutationQueue: Promise<void> = Promise.resolve();
+const loginRateLimitMap = new Map<string, { count: number; resetTime: number }>();
+
+function withManagedAdminAccountsLock<T>(operation: () => Promise<T> | T): Promise<T> {
+  const result = managedAdminMutationQueue.then(operation, operation);
+  managedAdminMutationQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function derivePassword(password: string, salt: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 32 * 1024 * 1024 }, (error, key) => {
+      if (error) reject(error);
+      else resolve(key);
+    });
+  });
+}
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derived = await derivePassword(password, salt);
+  return `scrypt$16384$8$1$${salt}$${derived.toString("hex")}`;
+}
+
+async function verifyPassword(password: string, encodedHash: string): Promise<boolean> {
+  const [algorithm, cost, blockSize, parallelization, salt, storedHex] = encodedHash.split("$");
+  if (algorithm !== "scrypt" || cost !== "16384" || blockSize !== "8" || parallelization !== "1" ||
+      !/^[a-f0-9]{32}$/.test(salt || "") || !/^[a-f0-9]{128}$/.test(storedHex || "")) {
+    return false;
+  }
+  const derived = await derivePassword(password, salt);
+  const stored = Buffer.from(storedHex, "hex");
+  return crypto.timingSafeEqual(derived, stored);
+}
+
+function saveManagedAdminAccounts(): void {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const temporaryPath = `${ADMIN_ACCOUNTS_JSON_PATH}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, JSON.stringify(managedAdminAccounts, null, 2), { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(temporaryPath, ADMIN_ACCOUNTS_JSON_PATH);
+}
+
+function loadLoginAttempts(): void {
+  if (!fs.existsSync(LOGIN_ATTEMPTS_JSON_PATH)) return;
+  const parsed: unknown = JSON.parse(fs.readFileSync(LOGIN_ATTEMPTS_JSON_PATH, "utf8"));
+  if (!Array.isArray(parsed) || parsed.some((entry) =>
+    !entry || typeof entry.key !== "string" || !/^[a-f0-9]{64}$/.test(entry.key) ||
+    !Number.isInteger(entry.count) || entry.count < 1 || entry.count > 10 ||
+    !Number.isFinite(entry.resetTime))) {
+    throw new Error("The persisted login rate-limit store is invalid; refusing to start.");
+  }
+  const now = Date.now();
+  for (const entry of parsed) {
+    if (entry.resetTime > now) loginRateLimitMap.set(entry.key, { count: entry.count, resetTime: entry.resetTime });
+  }
+}
+
+function saveLoginAttempts(): void {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const temporaryPath = `${LOGIN_ATTEMPTS_JSON_PATH}.${process.pid}.tmp`;
+  const entries = Array.from(loginRateLimitMap, ([key, attempt]) => ({ key, ...attempt }));
+  fs.writeFileSync(temporaryPath, JSON.stringify(entries), { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(temporaryPath, LOGIN_ATTEMPTS_JSON_PATH);
+}
+
+async function initializeManagedAdminAccounts(): Promise<void> {
+  if (fs.existsSync(ADMIN_ACCOUNTS_JSON_PATH)) {
+    const parsed: unknown = JSON.parse(fs.readFileSync(ADMIN_ACCOUNTS_JSON_PATH, "utf8"));
+    const isAccount = (account: unknown): account is ManagedAdminAccount => {
+      if (!account || typeof account !== "object") return false;
+      const candidate = account as Record<string, unknown>;
+      return typeof candidate.id === "string" && typeof candidate.name === "string" &&
+        typeof candidate.email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate.email) &&
+        (candidate.role === "super_admin" || candidate.role === "college_admin") &&
+        typeof candidate.passwordHash === "string" &&
+        /^scrypt\$16384\$8\$1\$[a-f0-9]{32}\$[a-f0-9]{128}$/.test(candidate.passwordHash) &&
+        typeof candidate.active === "boolean" && typeof candidate.tokenVersion === "number" &&
+        Number.isInteger(candidate.tokenVersion) && candidate.tokenVersion >= 0 &&
+        typeof candidate.createdAt === "string" && typeof candidate.updatedAt === "string";
+    };
+    if (!Array.isArray(parsed) || !parsed.every(isAccount)) {
+      throw new Error("The persisted admin account store is invalid; refusing to start.");
+    }
+    const emails = parsed.map((account) => normalizeEmail(account.email));
+    if (new Set(emails).size !== emails.length) {
+      throw new Error("Duplicate administrator emails exist in the admin account store; refusing to start.");
+    }
+    managedAdminAccounts = parsed;
+  }
+
+  const superAdmins = managedAdminAccounts.filter((account) => account.role === "super_admin");
+  if (superAdmins.length > 1) {
+    throw new Error("Multiple Super Admin accounts exist in the admin account store; refusing to start.");
+  }
+  if (!SUPER_ADMIN_EMAIL) return;
+  if (superAdmins.length === 1) return;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(SUPER_ADMIN_EMAIL) || !SUPER_ADMIN_NAME) {
+    throw new Error("SUPER_ADMIN_NAME and SUPER_ADMIN_EMAIL must contain valid administrator details.");
+  }
+
+  const legacyAdminEmail = normalizeEmail(process.env.ADMIN_EMAIL || "admin@college.edu");
+  if (SUPER_ADMIN_EMAIL === legacyAdminEmail ||
+      managedAdminAccounts.some((account) => normalizeEmail(account.email) === SUPER_ADMIN_EMAIL) ||
+      readStudentsFromCsv().some((student) => normalizeEmail(student.email) === SUPER_ADMIN_EMAIL) ||
+      Object.prototype.hasOwnProperty.call(STAFF_ACCOUNTS, SUPER_ADMIN_EMAIL)) {
+    throw new Error("SUPER_ADMIN_EMAIL conflicts with an existing administrator account.");
+  }
+  if (SECTOR_ADMIN_MAP[SUPER_ADMIN_EMAIL]) {
+    throw new Error("SUPER_ADMIN_EMAIL conflicts with an existing department administrator account.");
+  }
+
+  managedAdminAccounts.push({
+    id: crypto.randomUUID(),
+    name: SUPER_ADMIN_NAME,
+    email: SUPER_ADMIN_EMAIL,
+    role: "super_admin",
+    passwordHash: await hashPassword(SUPER_ADMIN_PASSWORD),
+    active: true,
+    tokenVersion: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  saveManagedAdminAccounts();
+}
+
+function publicAdminAccount(account: ManagedAdminAccount) {
+  return {
+    id: account.id,
+    name: account.name,
+    email: account.email,
+    role: account.role,
+    active: account.active,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt,
+  };
+}
 
 const ALLOWED_COLLEGE_EMAIL_DOMAIN = (process.env.ALLOWED_COLLEGE_EMAIL_DOMAIN || ".edu.in").toLowerCase();
 
@@ -295,6 +473,7 @@ const studentAcademicDirectory: Record<string, { name: string; department: strin
 interface UserPayload {
   studentId?: string;  // Optional for admin tokens
   rollNumber?: string; // Optional for admin tokens
+  accountVersion?: number;
   email: string;
   name: string;
   role: UserRole;
@@ -344,7 +523,7 @@ function verifyAuthToken(token: string): UserPayload | null {
     }
 
     const payload: UserPayload = JSON.parse(Buffer.from(dataB64, "base64url").toString("utf8"));
-    const validRoles: UserRole[] = ["student", "warden", "staff", "admin", "sector_admin", "main_admin"];
+    const validRoles: UserRole[] = ["student", "warden", "staff", "admin", "college_admin", "super_admin", "sector_admin", "main_admin"];
     if (!payload.exp || Date.now() > payload.exp || !validRoles.includes(payload.role) || !payload.email) return null;
 
     return payload;
@@ -365,6 +544,13 @@ function requireAuth(req: express.Request, res: express.Response, next: express.
   const user = verifyAuthToken(token);
   if (!user) {
     return res.status(401).json({ error: "Invalid or expired session. Please log in again." });
+  }
+
+  if (user.role === "college_admin" || user.role === "super_admin") {
+    const account = managedAdminAccounts.find((entry) => entry.id === user.studentId);
+    if (!account || !account.active || account.role !== user.role || account.tokenVersion !== user.accountVersion) {
+      return res.status(401).json({ error: "This administrator account is inactive or its session has expired. Please log in again." });
+    }
   }
 
   req.user = user;
@@ -389,7 +575,7 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
   }
 
   const role = req.user.role;
-  if (role === "main_admin" || role === "sector_admin" || role === "admin") {
+  if (role === "main_admin" || role === "sector_admin" || role === "admin" || role === "college_admin" || role === "super_admin") {
     return next();
   }
 
@@ -397,20 +583,56 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
 }
 
 // Main Admin Authorization Middleware: Ensures main/super administrator access
-function requireMainAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+function requireSuperAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (!req.user) {
     return res.status(401).json({ error: "Authentication required." });
   }
 
-  if (req.user.role === "main_admin" || req.user.role === "admin") {
+  if (req.user.role === "super_admin") {
     return next();
   }
 
-  return res.status(403).json({ error: "Access denied. Main Administrator privileges required." });
+  return res.status(403).json({ error: "Access denied. Super Administrator privileges required." });
 }
 
-// Simple in-memory IP Rate Limiter for AI endpoints
+// Login failures are persisted under DATA_DIR; AI request limits remain process-local.
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+
+function rateLimitLogin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const now = Date.now();
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const key = crypto.createHmac("sha256", AUTH_SECRET).update(ip).digest("hex");
+  let expired = false;
+  for (const [storedKey, attempt] of loginRateLimitMap) {
+    if (now >= attempt.resetTime) {
+      loginRateLimitMap.delete(storedKey);
+      expired = true;
+    }
+  }
+  if (expired) saveLoginAttempts();
+
+  const limit = loginRateLimitMap.get(key);
+  if (limit && limit.count >= 10) {
+    res.setHeader("Retry-After", String(Math.ceil((limit.resetTime - now) / 1000)));
+    return res.status(429).json({ error: "Too many login attempts. Please try again later." });
+  }
+  if (!limit && loginRateLimitMap.size >= 10000) {
+    return res.status(503).json({ error: "Login is temporarily unavailable. Please try again later." });
+  }
+  next();
+}
+
+function recordLoginFailure(req: express.Request): void {
+  const now = Date.now();
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const key = crypto.createHmac("sha256", AUTH_SECRET).update(ip).digest("hex");
+  const current = loginRateLimitMap.get(key);
+  loginRateLimitMap.set(key, current && now < current.resetTime
+    ? { count: Math.min(current.count + 1, 10), resetTime: current.resetTime }
+    : { count: 1, resetTime: now + 15 * 60 * 1000 });
+  saveLoginAttempts();
+}
+
 function rateLimitAI(req: express.Request, res: express.Response, next: express.NextFunction) {
   const ip = req.ip || req.socket.remoteAddress || "unknown-client";
   const now = Date.now();
@@ -629,7 +851,7 @@ function addNotification(notification: Omit<DBNotification, "id" | "timestamp" |
 }
 
 function isAdminRole(role: UserRole): boolean {
-  return role === "main_admin" || role === "sector_admin" || role === "admin";
+  return role === "main_admin" || role === "sector_admin" || role === "admin" || role === "college_admin" || role === "super_admin";
 }
 
 function isComplaintOwner(user: AuthenticatedUser, complaint: DBComplaint): boolean {
@@ -649,7 +871,7 @@ function canManageDepartmentComplaint(user: AuthenticatedUser, complaint: DBComp
 }
 
 function canAccessComplaint(user: AuthenticatedUser, complaint: DBComplaint): boolean {
-  if (user.role === "main_admin" || user.role === "admin") return true;
+  if (user.role === "main_admin" || user.role === "admin" || user.role === "college_admin" || user.role === "super_admin") return true;
   if (user.role === "sector_admin") return complaint.sector === user.sector;
   if (user.role === "warden" || user.role === "staff") return canManageDepartmentComplaint(user, complaint);
   return isComplaintOwner(user, complaint);
@@ -1170,23 +1392,46 @@ const SECTOR_ADMIN_MAP: Record<string, { name: string; sector: string }> = {
   "general.admin@college.edu": { name: "General Admin", sector: "General Administration" }
 };
 
-const handleAdminLogin = (req: express.Request, res: express.Response) => {
+const handleAdminLogin = async (req: express.Request, res: express.Response) => {
   const { email, password } = req.body;
 
-  // Validation
   if (!email || typeof email !== "string" || !email.includes("@")) {
+    recordLoginFailure(req);
     return res.status(400).json({ error: "Please enter a valid email address." });
   }
 
   if (!password || typeof password !== "string" || password.length < 1) {
+    recordLoginFailure(req);
     return res.status(400).json({ error: "Please enter your password." });
   }
 
-  // Get admin credentials from environment variables
   const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@college.edu").toLowerCase();
-  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
-
-  const cleanEmail = email.trim().toLowerCase();
+  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+  const cleanEmail = normalizeEmail(email);
+  const managedAccount = managedAdminAccounts.find((account) => normalizeEmail(account.email) === cleanEmail);
+  if (managedAccount) {
+    if (!managedAccount.active || !(await verifyPassword(password, managedAccount.passwordHash))) {
+      recordLoginFailure(req);
+      return res.status(401).json({ error: "Invalid admin credentials." });
+    }
+    const token = generateAuthToken({
+      studentId: managedAccount.id,
+      rollNumber: "ADMIN",
+      email: managedAccount.email,
+      name: managedAccount.name,
+      role: managedAccount.role,
+      accountVersion: managedAccount.tokenVersion,
+    });
+    return res.json({
+      success: true,
+      token,
+      email: managedAccount.email,
+      name: managedAccount.name,
+      role: managedAccount.role,
+      adminId: managedAccount.id,
+      message: `${managedAccount.name} authentication successful.`,
+    });
+  }
 
   let role: "main_admin" | "sector_admin" = "main_admin";
   let sector: string | undefined = undefined;
@@ -1201,10 +1446,10 @@ const handleAdminLogin = (req: express.Request, res: express.Response) => {
     name = SECTOR_ADMIN_MAP[cleanEmail].name;
   } else {
     console.log(`[AUTH] Failed admin login attempt: ${cleanEmail}`);
+    recordLoginFailure(req);
     return res.status(401).json({ error: "Invalid admin credentials." });
   }
 
-  // Generate admin authentication token
   const token = generateAuthToken({
     studentId: `admin-${role}-${sector || 'main'}`,
     rollNumber: "ADMIN",
@@ -1228,16 +1473,17 @@ const handleAdminLogin = (req: express.Request, res: express.Response) => {
 };
 
 const STAFF_ACCOUNTS: Record<string, { password: string; id: string; name: string; role: "warden" | "staff"; department: string }> = {
-  "warden@college.edu": { password: process.env.STAFF_PASSWORD || "warden123", id: "warden-a", name: "Hostel Warden", role: "warden", department: "Hostel / Warden" },
-  "maintenance@college.edu": { password: process.env.STAFF_PASSWORD || "staff123", id: "maintenance-staff", name: "Maintenance Staff", role: "staff", department: "Room Maintenance" },
-  "it.staff@college.edu": { password: process.env.STAFF_PASSWORD || "staff123", id: "it-admin", name: "IT Admin", role: "staff", department: "IT / Network" },
-  "electrical@college.edu": { password: process.env.STAFF_PASSWORD || "staff123", id: "electrical-staff", name: "Electrical Staff", role: "staff", department: "Electrical" },
+  "warden@college.edu": { password: process.env.STAFF_PASSWORD || "", id: "warden-a", name: "Hostel Warden", role: "warden", department: "Hostel / Warden" },
+  "maintenance@college.edu": { password: process.env.STAFF_PASSWORD || "", id: "maintenance-staff", name: "Maintenance Staff", role: "staff", department: "Room Maintenance" },
+  "it.staff@college.edu": { password: process.env.STAFF_PASSWORD || "", id: "it-admin", name: "IT Admin", role: "staff", department: "IT / Network" },
+  "electrical@college.edu": { password: process.env.STAFF_PASSWORD || "", id: "electrical-staff", name: "Electrical Staff", role: "staff", department: "Electrical" },
 };
 
-app.post("/api/auth/staff-login", (req, res) => {
+app.post("/api/auth/staff-login", rateLimitLogin, (req, res) => {
   const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
   const account = STAFF_ACCOUNTS[email];
-  if (!account || req.body.password !== account.password) {
+  if (!account || !account.password || typeof req.body.password !== "string" || req.body.password !== account.password) {
+    recordLoginFailure(req);
     return res.status(401).json({ error: "Invalid staff credentials." });
   }
   const token = generateAuthToken({
@@ -1269,8 +1515,146 @@ app.post("/api/auth/staff-login", (req, res) => {
   });
 });
 
-app.post("/api/auth/admin-login", handleAdminLogin);
-app.post("/api/admin/login", handleAdminLogin);
+app.post("/api/auth/admin-login", rateLimitLogin, handleAdminLogin);
+
+app.get("/api/admin/accounts", requireAuth, requireSuperAdmin, (_req, res) => {
+  res.json({ accounts: managedAdminAccounts.map(publicAdminAccount) });
+});
+
+app.post("/api/admin/accounts", requireAuth, requireSuperAdmin, async (req, res) => {
+  const { name, email, password, role } = req.body;
+  if (role !== undefined && role !== "college_admin") {
+    return res.status(403).json({ error: "Only College Admin accounts can be created through this endpoint." });
+  }
+  if (typeof name !== "string" || !name.trim() || name.trim().length > 100) {
+    return res.status(400).json({ error: "Enter a name between 1 and 100 characters." });
+  }
+  if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    return res.status(400).json({ error: "Enter a valid email address." });
+  }
+  if (typeof password !== "string" || password.length < 12 || password.length > 200) {
+    return res.status(400).json({ error: "Passwords must be between 12 and 200 characters." });
+  }
+  const cleanEmail = normalizeEmail(email);
+  const legacyAdminEmail = normalizeEmail(process.env.ADMIN_EMAIL || "admin@college.edu");
+  if (cleanEmail === legacyAdminEmail || Boolean(SECTOR_ADMIN_MAP[cleanEmail]) ||
+      readStudentsFromCsv().some((student) => normalizeEmail(student.email) === cleanEmail) ||
+      Object.prototype.hasOwnProperty.call(STAFF_ACCOUNTS, cleanEmail)) {
+    return res.status(409).json({ error: "An account with this email address already exists." });
+  }
+
+  return withManagedAdminAccountsLock(async () => {
+    if (managedAdminAccounts.some((account) => normalizeEmail(account.email) === cleanEmail)) {
+      return res.status(409).json({ error: "An account with this email address already exists." });
+    }
+    try {
+      const now = new Date().toISOString();
+      const account: ManagedAdminAccount = {
+        id: crypto.randomUUID(),
+        name: name.trim(),
+        email: cleanEmail,
+        role: "college_admin",
+        passwordHash: await hashPassword(password),
+        active: true,
+        tokenVersion: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      managedAdminAccounts.push(account);
+      try {
+        saveManagedAdminAccounts();
+      } catch (error) {
+        managedAdminAccounts.pop();
+        throw error;
+      }
+      return res.status(201).json({ account: publicAdminAccount(account) });
+    } catch (error) {
+      console.error("Failed to create College Admin account:", error);
+      return res.status(500).json({ error: "Failed to save the administrator account." });
+    }
+  });
+});
+
+app.post("/api/admin/accounts/change-password", requireAuth, requireSuperAdmin, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (typeof currentPassword !== "string" || !currentPassword ||
+      typeof newPassword !== "string" || newPassword.length < 12 || newPassword.length > 200) {
+    return res.status(400).json({ error: "Enter your current password and a new password of 12 to 200 characters." });
+  }
+  const accountId = req.user!.studentId;
+  return withManagedAdminAccountsLock(async () => {
+    const account = managedAdminAccounts.find((entry) => entry.id === accountId && entry.role === "super_admin");
+    if (!account || !account.active || !(await verifyPassword(currentPassword, account.passwordHash))) {
+      return res.status(401).json({ error: "Current password is incorrect." });
+    }
+    const previousHash = account.passwordHash;
+    const previousVersion = account.tokenVersion;
+    try {
+      account.passwordHash = await hashPassword(newPassword);
+      account.tokenVersion += 1;
+      account.updatedAt = new Date().toISOString();
+      saveManagedAdminAccounts();
+      return res.json({ success: true, message: "Password changed. Please sign in again." });
+    } catch (error) {
+      account.passwordHash = previousHash;
+      account.tokenVersion = previousVersion;
+      console.error("Failed to change Super Admin password:", error);
+      return res.status(500).json({ error: "Failed to save the new password." });
+    }
+  });
+});
+
+app.patch("/api/admin/accounts/:id", requireAuth, requireSuperAdmin, async (req, res) => {
+  if (typeof req.body.active !== "boolean" || req.body.role !== undefined) {
+    return res.status(400).json({ error: "Only the account active state can be changed." });
+  }
+  return withManagedAdminAccountsLock(() => {
+    const account = managedAdminAccounts.find((entry) => entry.id === req.params.id && entry.role === "college_admin");
+    if (!account) return res.status(404).json({ error: "College Admin account not found." });
+
+    const previousActive = account.active;
+    const previousVersion = account.tokenVersion;
+    account.active = req.body.active;
+    account.tokenVersion += 1;
+    account.updatedAt = new Date().toISOString();
+    try {
+      saveManagedAdminAccounts();
+      return res.json({ account: publicAdminAccount(account) });
+    } catch (error) {
+      account.active = previousActive;
+      account.tokenVersion = previousVersion;
+      console.error("Failed to update College Admin account:", error);
+      return res.status(500).json({ error: "Failed to save the administrator account." });
+    }
+  });
+});
+
+app.post("/api/admin/accounts/:id/reset-password", requireAuth, requireSuperAdmin, async (req, res) => {
+  const { password } = req.body;
+  if (typeof password !== "string" || password.length < 12 || password.length > 200) {
+    return res.status(400).json({ error: "Passwords must be between 12 and 200 characters." });
+  }
+  return withManagedAdminAccountsLock(async () => {
+    const account = managedAdminAccounts.find((entry) => entry.id === req.params.id && entry.role === "college_admin");
+    if (!account) return res.status(404).json({ error: "College Admin account not found." });
+
+    const previousHash = account.passwordHash;
+    const previousVersion = account.tokenVersion;
+    try {
+      account.passwordHash = await hashPassword(password);
+      account.tokenVersion += 1;
+      account.updatedAt = new Date().toISOString();
+      saveManagedAdminAccounts();
+      return res.json({ account: publicAdminAccount(account) });
+    } catch (error) {
+      account.passwordHash = previousHash;
+      account.tokenVersion = previousVersion;
+      console.error("Failed to reset College Admin password:", error);
+      return res.status(500).json({ error: "Failed to save the administrator account." });
+    }
+  });
+});
+app.post("/api/admin/login", rateLimitLogin, handleAdminLogin);
 
 // ==========================================
 // 7. COMPLAINTS APIs (PROTECTED)
@@ -1285,7 +1669,7 @@ app.get("/api/complaints", requireAuth, (req, res) => {
   let results = [...complaints];
 
   // Role & Privacy Access Controls
-  if (userRole === "main_admin" || userRole === "admin") {
+  if (userRole === "main_admin" || userRole === "admin" || userRole === "college_admin" || userRole === "super_admin") {
     // Main Admin sees all complaints. Optional filter by sector:
     if (sector && sector !== "All") {
       results = results.filter(c => c.sector === sector);
@@ -2553,6 +2937,9 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 async function startServer() {
+  loadLoginAttempts();
+  await initializeManagedAdminAccounts();
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

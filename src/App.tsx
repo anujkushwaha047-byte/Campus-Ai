@@ -683,7 +683,7 @@ export default function App() {
 
         {/* 7. Admin Dashboard Route: Protected admin portal */}
         <Route path="/admin" element={<Navigate to="/admin-dashboard" replace />} />
-        <Route path="/admin-dashboard" element={<ProtectedRoute allowedRoles={["admin"]}><AdminDashboard /></ProtectedRoute>} />
+        <Route path="/admin-dashboard" element={<ProtectedRoute allowedRoles={["admin", "college_admin", "super_admin"]}><AdminDashboard profile={studentProfile!} /></ProtectedRoute>} />
         <Route path="/warden-dashboard" element={<ProtectedRoute allowedRoles={["warden"]}><DepartmentDashboard profile={studentProfile!} onLogout={handleLogout} /></ProtectedRoute>} />
         <Route path="/department-dashboard" element={<ProtectedRoute allowedRoles={["staff"]}><DepartmentDashboard profile={studentProfile!} onLogout={handleLogout} /></ProtectedRoute>} />
 

@@ -77,11 +77,16 @@
    Create a `.env` file in the root directory:
    ```env
    GEMINI_API_KEY="your_google_gemini_api_key"
-   AUTH_SECRET="a-long-random-secret"
-   ADMIN_PASSWORD="your-local-admin-password"
-   STAFF_PASSWORD="your-local-staff-password"
+   AUTH_SECRET="a-persistent-random-secret-of-at-least-32-bytes"
+   ADMIN_EMAIL="admin@college.edu"
+   ADMIN_PASSWORD="a-unique-strong-legacy-admin-password"
+   STAFF_PASSWORD="a-unique-strong-staff-password"
+   SUPER_ADMIN_NAME="Campus Super Admin"
+   SUPER_ADMIN_EMAIL="superadmin@college.edu"
+   SUPER_ADMIN_PASSWORD="use-a-unique-password-of-at-least-12-characters"
    DEMO_MODE="true"
    ALLOWED_COLLEGE_EMAIL_DOMAIN=".edu.in"
+   DATA_DIR="./data"
    ```
 
 4. **Start the development server:**
@@ -98,10 +103,14 @@
 
 ### Production configuration and persistence
 
-- Render requires `AUTH_SECRET`, `ADMIN_PASSWORD`, and `STAFF_PASSWORD`; set them as private environment variables. Demo login is disabled in production.
+- `render.yaml` provisions a paid Starter web service with a 1 GB persistent disk mounted at `/var/data`, and sets `DATA_DIR=/var/data`. All JSON/CSV stores, including admin accounts and login throttling data, must stay under this mount. Render persistent disks require a paid service and prevent scaling that service to multiple instances.
+- Render requires `AUTH_SECRET`, `ADMIN_PASSWORD`, `STAFF_PASSWORD`, `SUPER_ADMIN_NAME`, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD`; set secret values privately in Render. Use an `AUTH_SECRET` of at least 32 bytes and unique passwords of at least 12 characters. Demo login is disabled in production. `ADMIN_EMAIL` is optional and defaults to `admin@college.edu`; `GEMINI_API_KEY` is optional unless Gemini features are required.
 - Authentication tokens remain valid across server restarts only when the same `AUTH_SECRET` is retained.
-- This repository does not currently include PostgreSQL or read `DATABASE_URL`. Student records are stored in `students.csv`; complaints (including comments and timeline) and notifications are stored in JSON files.
-- The default `data/` directory must be on persistent storage in production. On Render, attach a persistent disk and set `DATA_DIR` to its mount path. Render's ephemeral filesystem can lose application data across restarts/deploys.
+- The first server startup hashes the configured Super Admin password and persists the account in `admin-accounts.json`. Later restarts do not reset it from environment variables. To rotate it, use the Super Admin password-change form on the Admin Dashboard; the current password is required and existing Super Admin sessions are revoked. College Admin account changes are serialized to prevent concurrent duplicate emails.
+- Super Admin can create College Admin accounts using passwords of at least 12 characters, deactivate/reactivate them, and reset their passwords. Deactivation and password reset invalidate that account's existing sessions. College Admins cannot access account-management endpoints or promote accounts.
+- For backward compatibility, `ADMIN_EMAIL`/`ADMIN_PASSWORD` still authenticate the legacy `main_admin` account, which can manage complaints but cannot manage Super Admin or College Admin accounts. Treat this as a separate break-glass college administrator and use a unique strong password. Local `ADMIN_PASSWORD` and `STAFF_PASSWORD` must be explicitly set to enable those login routes; there are no weak built-in password defaults.
+- Failed admin/staff login attempts are rate-limited and stored as keyed hashes under `DATA_DIR`; they are not cleared by a successful login. Keep a stable `AUTH_SECRET` and a single disk-backed service instance for the file-based limits to remain effective.
+- This repository does not currently include PostgreSQL or read `DATABASE_URL`. Student records are stored in `students.csv`; complaints (including comments and timeline), notifications, and managed administrator accounts are stored in JSON files.
 
 ---
 

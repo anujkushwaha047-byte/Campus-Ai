@@ -11,7 +11,7 @@ interface StaffLoginPageProps {
 export const StaffLoginPage: React.FC<StaffLoginPageProps> = ({ onLoginSuccess }) => {
   const navigate = useNavigate();
   const [email, setEmail] = useState("warden@college.edu");
-  const [password, setPassword] = useState("warden123");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 

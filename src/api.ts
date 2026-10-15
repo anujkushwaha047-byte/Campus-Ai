@@ -55,3 +55,23 @@ export async function apiPost<T>(endpoint: string, data: any): Promise<T> {
   }
   return res.json();
 }
+
+export async function apiPatch<T>(endpoint: string, data: unknown): Promise<T> {
+  const token = getStoredAuth()?.token || localStorage.getItem("token") || localStorage.getItem("admin_token");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = "Bearer " + token;
+  }
+  const res = await fetch(endpoint, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || `Request failed with status ${res.status}`);
+  }
+  return res.json();
+}

@@ -91,7 +91,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({ onLoginSuccess }
           emailVerified: true,
           isVerified: true,
           registrationDate: new Date().toISOString(),
-          name: "Administrator",
+          name: data.name || "Administrator",
           department: "Administration",
           year: "N/A",
           role: data.role || "admin",

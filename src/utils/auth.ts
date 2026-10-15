@@ -9,16 +9,17 @@ export interface AuthSession {
   timestamp: number;
 }
 
-export type AppRole = "student" | "admin" | "main_admin" | "super_admin" | "warden" | "staff";
+export type AppRole = "student" | "admin" | "main_admin" | "super_admin" | "college_admin" | "sector_admin" | "warden" | "staff";
 
 export function getSessionRole(): AppRole {
   const role = getStoredAuth()?.student.role;
   if (role === "main_admin" || role === "sector_admin") return "admin";
+  if (role === "super_admin" || role === "college_admin") return role;
   return role === "warden" || role === "staff" ? role : "student";
 }
 
 export function getDashboardPath(role: string = getSessionRole()): string {
-  if (role === "admin" || role === "main_admin" || role === "super_admin") return "/admin-dashboard";
+  if (role === "admin" || role === "main_admin" || role === "super_admin" || role === "college_admin") return "/admin-dashboard";
   if (role === "warden") return "/warden-dashboard";
   if (role === "staff") return "/department-dashboard";
   return "/dashboard";
