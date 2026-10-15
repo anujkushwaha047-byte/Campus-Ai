@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { createHmac, randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -50,6 +50,73 @@ async function freePort() {
   return port;
 }
 
+function productionEnvironment(dataDir) {
+  return {
+    ...process.env,
+    NODE_ENV: "production",
+    DEMO_MODE: "false",
+    PORT: "3000",
+    DATA_DIR: dataDir,
+    APP_URL: "https://campus.example.test",
+    CORS_ALLOWED_ORIGINS: "",
+    AUTH_SECRET: "isolated-test-secret-with-at-least-32-bytes",
+    ADMIN_EMAIL: "admin@college.edu",
+    ADMIN_PASSWORD: "test-legacy-admin-password",
+    STAFF_CREDENTIALS: JSON.stringify(staffCredentials),
+    SECTOR_ADMIN_CREDENTIALS: JSON.stringify(sectorCredentials),
+    SUPER_ADMIN_NAME: "Test Super Admin",
+    SUPER_ADMIN_EMAIL: "superadmin@test.example",
+    SUPER_ADMIN_PASSWORD: "test-super-admin-password",
+    EMAIL_PROVIDER: "resend",
+    RESEND_API_KEY: "re_localstub_api_key_12345678",
+    OTP_FROM_EMAIL: "noreply@campus.example.test",
+  };
+}
+
+async function expectProductionStartupFailure(overrides) {
+  const dataDir = mkdtempSync(path.join(tmpdir(), `campus-ai-config-${randomUUID()}-`));
+  const env = productionEnvironment(dataDir);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) delete env[key];
+    else env[key] = value;
+  }
+  const child = spawn(process.execPath, ["--import", "tsx", "server.ts"], {
+    cwd: process.cwd(),
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.stderr.on("data", (chunk) => { output += chunk; });
+  try {
+    const exitCode = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        child.kill();
+        reject(new Error("Invalid production configuration did not stop startup."));
+      }, 10_000);
+      child.once("exit", (code) => {
+        clearTimeout(timer);
+        resolve(code);
+      });
+    });
+    assert.notEqual(exitCode, 0);
+    for (const secret of [
+      env.AUTH_SECRET,
+      env.ADMIN_PASSWORD,
+      env.RESEND_API_KEY,
+      env.SUPER_ADMIN_PASSWORD,
+    ]) {
+      if (secret) assert.equal(output.includes(secret), false);
+    }
+    return output;
+  } finally {
+    if (child.exitCode === null) child.kill();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
 async function startApp(dataDir, production = false, overrides = {}) {
   const port = await freePort();
   const origin = "https://campus.example.test";
@@ -94,7 +161,7 @@ async function startApp(dataDir, production = false, overrides = {}) {
     SUPER_ADMIN_EMAIL: "superadmin@test.example",
     SUPER_ADMIN_PASSWORD: "test-super-admin-password",
     EMAIL_PROVIDER: production ? "resend" : "",
-    RESEND_API_KEY: production ? "test-resend-api-key" : "",
+    RESEND_API_KEY: production ? "re_localstub_api_key_12345678" : "",
     OTP_FROM_EMAIL: production ? "noreply@campus.example.test" : "",
     APP_URL: production ? origin : "",
     CORS_ALLOWED_ORIGINS: "",
@@ -145,7 +212,7 @@ async function startOtpApp(t) {
   const app = await startApp(dataDir, false, {
     DEMO_MODE: "false",
     EMAIL_PROVIDER: "resend",
-    RESEND_API_KEY: "test-resend-api-key",
+    RESEND_API_KEY: "re_localstub_api_key_12345678",
     OTP_FROM_EMAIL: "noreply@campus.example.test",
   });
   t.after(async () => {
@@ -231,6 +298,13 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
     method: "POST",
     body: { email: "warden@college.edu", password: staffCredentials["electrical@college.edu"] },
   })).response.status, 401);
+  const wardenNotifications = await request(app.baseUrl, "/api/notifications", {
+    token: wardenLogin.data.token,
+  });
+  assert.equal(wardenNotifications.data.notifications.some((notification) => notification.id === "notif-1"), false);
+  assert.equal((await request(app.baseUrl, "/api/complaints/assigned", {
+    token: wardenLogin.data.token,
+  })).data.complaints.some((complaint) => complaint.department !== "Hostel / Warden"), false);
   assert.equal((await request(app.baseUrl, "/api/auth/admin-login", {
     method: "POST",
     body: { email: "it.admin@college.edu", password: "test-legacy-admin-password" },
@@ -248,6 +322,12 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
   });
   assert.equal(sectorAdminLogin.response.status, 200);
   assert.equal(sectorAdminLogin.data.role, "sector_admin");
+  assert.equal((await request(app.baseUrl, "/api/notifications", {
+    token: sectorAdminLogin.data.token,
+  })).data.notifications.some((notification) => notification.id === "notif-1"), false);
+  assert.equal((await request(app.baseUrl, "/api/admin/students", {
+    token: sectorAdminLogin.data.token,
+  })).response.status, 403);
 
   assert.equal((await request(app.baseUrl, "/api/auth/session", { token: "invalid-token" })).response.status, 401);
   assert.equal((await request(app.baseUrl, "/api/auth/session", { token: expiredToken() })).response.status, 401);
@@ -282,7 +362,7 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
     method: "POST",
     body: {
       rollNumber: "UNKNOWN-OTP-ROLL",
-      email: "attacker@college.edu.in",
+      email: "student@college.edu.in",
       phone: "9876543210",
     },
   });
@@ -324,6 +404,12 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
     body: { account: "super_admin" },
   });
   assert.equal(adminLogin.response.status, 200);
+  assert.equal((await request(app.baseUrl, "/api/notifications", {
+    token: adminLogin.data.token,
+  })).data.notifications.some((notification) => notification.id === "notif-1"), true);
+  assert.equal((await request(app.baseUrl, "/api/admin/accounts", {
+    token: adminLogin.data.token,
+  })).response.status, 403);
   const assignment = await request(app.baseUrl, `/api/complaints/${complaintId}/assign`, {
     method: "POST",
     token: adminLogin.data.token,
@@ -372,6 +458,16 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
   });
   assert.ok(electricalAssignments.data.complaints.some((complaint) => complaint.id === complaintId));
   assert.equal(itAssignments.data.complaints.some((complaint) => complaint.id === complaintId), false);
+  const electricalNotifications = await request(app.baseUrl, "/api/notifications", {
+    token: electricalLogin.data.token,
+  });
+  const itNotifications = await request(app.baseUrl, "/api/notifications", {
+    token: itLogin.data.token,
+  });
+  assert.equal(electricalNotifications.data.notifications.some((notification) =>
+    notification.complaintId === complaintId && notification.recipientType === "admin"), true);
+  assert.equal(itNotifications.data.notifications.some((notification) =>
+    notification.complaintId === complaintId && notification.recipientType === "admin"), false);
   assert.equal((await request(app.baseUrl, `/api/complaints/${complaintId}/status`, {
     method: "PATCH",
     token: itLogin.data.token,
@@ -441,6 +537,16 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
     body: { email: "collegeadmin@test.example", password: "test-college-admin-password" },
   });
   assert.equal(collegeAdminLogin.response.status, 200);
+  assert.equal((await request(app.baseUrl, "/api/admin/accounts", {
+    token: collegeAdminLogin.data.token,
+    method: "POST",
+    body: {
+      name: "Attempted Super Admin",
+      email: "another-superadmin@test.example",
+      password: "test-another-super-admin-password",
+      role: "super_admin",
+    },
+  })).response.status, 403);
   assert.equal((await request(app.baseUrl, "/api/admin/accounts", {
     token: collegeAdminLogin.data.token,
   })).response.status, 403);
@@ -539,6 +645,16 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
   assert.equal(productionOtp.response.status, 202);
   assert.equal(productionOtp.data.demoOtp, undefined);
   assert.ok(existsSync(productionApp.otpCapturePath));
+  const unknownProductionOtp = await request(productionApp.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "UNKNOWN-PRODUCTION-ROLL",
+      email: "student@college.edu.in",
+      phone: "9876543210",
+    },
+  });
+  assert.equal(unknownProductionOtp.response.status, productionOtp.response.status);
+  assert.deepEqual(unknownProductionOtp.data, productionOtp.data);
   const productionOtpCode = readFileSync(productionApp.otpCapturePath, "utf8");
   const productionOtpVerification = await request(productionApp.baseUrl, "/api/auth/verify-otp", {
     method: "POST",
@@ -613,6 +729,15 @@ test("OTP delivery succeeds only after provider acceptance and verification is s
   assert.equal(app.output().includes(code), false);
 
   writeFileSync(app.providerStatusPath, "503");
+  const unknownRequest = await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "UNKNOWN-OTP-ROLL",
+      email: "ankit.singh@college.edu.in",
+      phone: "9876501234",
+    },
+  });
+  assert.equal(unknownRequest.response.status, 202);
   const failedDelivery = await request(app.baseUrl, "/api/auth/send-otp", {
     method: "POST",
     body: {
@@ -621,7 +746,8 @@ test("OTP delivery succeeds only after provider acceptance and verification is s
       phone: "9876501234",
     },
   });
-  assert.equal(failedDelivery.response.status, 503);
+  assert.equal(failedDelivery.response.status, 202);
+  assert.deepEqual(failedDelivery.data, unknownRequest.data);
   assert.equal(failedDelivery.data.demoOtp, undefined);
   assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
     method: "POST",
@@ -652,8 +778,18 @@ test("OTP expiry and exact registered identity binding are enforced", async (t) 
   })).response.status, 400);
 });
 
-test("OTP email and roll-number binding, attempt limit, and request rate limit", async (t) => {
+test("OTP requests and verification stay bound to the registered email and roll number", async (t) => {
   const app = await startOtpApp(t);
+  const mismatchedEmailRequest = await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "wrong@college.edu.in",
+      phone: "9876543210",
+    },
+  });
+  assert.equal(mismatchedEmailRequest.response.status, 202);
+  assert.equal(mismatchedEmailRequest.data.demoOtp, undefined);
   const firstSend = await request(app.baseUrl, "/api/auth/send-otp", {
     method: "POST",
     body: {
@@ -672,8 +808,11 @@ test("OTP email and roll-number binding, attempt limit, and request rate limit",
     method: "POST",
     body: { rollNumber: "23AIML001", email: "student@college.edu.in", otp: firstCode },
   })).response.status, 200);
+});
 
-  const secondSend = await request(app.baseUrl, "/api/auth/send-otp", {
+test("an exhausted OTP challenge is indistinguishable from an unknown challenge", async (t) => {
+  const app = await startOtpApp(t);
+  const sent = await request(app.baseUrl, "/api/auth/send-otp", {
     method: "POST",
     body: {
       rollNumber: "2021MEB021",
@@ -681,21 +820,30 @@ test("OTP email and roll-number binding, attempt limit, and request rate limit",
       phone: "9876501234",
     },
   });
-  assert.equal(secondSend.response.status, 202);
+  assert.equal(sent.response.status, 202);
+  const noChallenge = await request(app.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: { rollNumber: "NOT-REGISTERED", email: "unknown@college.edu.in", otp: "000000" },
+  });
+  assert.equal(noChallenge.response.status, 400);
   for (let attempt = 0; attempt < 4; attempt += 1) {
     assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
       method: "POST",
       body: { rollNumber: "2021MEB021", email: "ankit.singh@college.edu.in", otp: "000000" },
     })).response.status, 400);
   }
-  assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
+  const exhaustedChallenge = await request(app.baseUrl, "/api/auth/verify-otp", {
     method: "POST",
     body: { rollNumber: "2021MEB021", email: "ankit.singh@college.edu.in", otp: "000000" },
-  })).response.status, 429);
-  assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
+  });
+  assert.equal(exhaustedChallenge.response.status, 400);
+  assert.deepEqual(exhaustedChallenge.data, noChallenge.data);
+  const afterExhaustion = await request(app.baseUrl, "/api/auth/verify-otp", {
     method: "POST",
     body: { rollNumber: "2021MEB021", email: "ankit.singh@college.edu.in", otp: "000000" },
-  })).response.status, 400);
+  });
+  assert.equal(afterExhaustion.response.status, 400);
+  assert.deepEqual(afterExhaustion.data, noChallenge.data);
 });
 
 test("OTP send requests are rate limited per client", async (t) => {
@@ -719,4 +867,167 @@ test("OTP send requests are rate limited per client", async (t) => {
       phone: "9876543210",
     },
   })).response.status, 429);
+});
+
+test("production startup rejects missing or insecure configuration without printing secrets", async () => {
+  const requiredVariables = [
+    "APP_URL",
+    "AUTH_SECRET",
+    "ADMIN_PASSWORD",
+    "STAFF_CREDENTIALS",
+    "SECTOR_ADMIN_CREDENTIALS",
+    "SUPER_ADMIN_NAME",
+    "SUPER_ADMIN_EMAIL",
+    "SUPER_ADMIN_PASSWORD",
+    "EMAIL_PROVIDER",
+    "RESEND_API_KEY",
+    "OTP_FROM_EMAIL",
+    "DATA_DIR",
+    "DEMO_MODE",
+  ];
+  for (const variable of requiredVariables) {
+    await expectProductionStartupFailure({ [variable]: undefined });
+  }
+
+  const insecureConfigurations = [
+    { AUTH_SECRET: "a".repeat(64) },
+    { APP_URL: "http://campus.example.test" },
+    { DATA_DIR: "relative-data" },
+    { DEMO_MODE: "true" },
+    { EMAIL_PROVIDER: "sendgrid" },
+    { RESEND_API_KEY: "not-a-resend-key" },
+    { RESEND_API_KEY: "re_replace-with-your-private-key" },
+    { OTP_FROM_EMAIL: "not-an-email-address" },
+    { STAFF_CREDENTIALS: "not-json" },
+    { PORT: "3000-extra" },
+  ];
+  for (const environment of insecureConfigurations) {
+    await expectProductionStartupFailure(environment);
+  }
+});
+
+test("a fresh production data directory contains no demo student accounts", async (t) => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), `campus-ai-production-roster-${randomUUID()}-`));
+  const app = await startApp(dataDir, true);
+  t.after(async () => {
+    await stopApp(app.child);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  const roster = readFileSync(path.join(dataDir, "students.csv"), "utf8");
+  assert.equal(roster.trim(), "student_id,roll_number,email,phone,email_verified,registration_date");
+  const send = await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "student@college.edu.in",
+      phone: "9876543210",
+    },
+  });
+  assert.equal(send.response.status, 202);
+  assert.equal(send.data.demoOtp, undefined);
+  assert.equal(existsSync(app.otpCapturePath), false);
+});
+
+test("untargeted and other-user notifications are not exposed through the notification API", async (t) => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), `campus-ai-notification-scope-${randomUUID()}-`));
+  writeFileSync(path.join(dataDir, "notifications.json"), JSON.stringify([
+    {
+      id: "untargeted-student",
+      recipientType: "student",
+      complaintId: "CMP-OTHER",
+      title: "Another student's private status",
+      message: "Private status details",
+      timestamp: new Date().toISOString(),
+      read: false,
+      type: "status",
+    },
+    {
+      id: "other-student",
+      recipientType: "student",
+      recipientId: "STU002",
+      complaintId: "CMP-OTHER",
+      title: "Another student's assigned status",
+      message: "Private assigned status details",
+      timestamp: new Date().toISOString(),
+      read: false,
+      type: "status",
+    },
+    {
+      id: "untargeted-admin",
+      recipientType: "admin",
+      complaintId: "CMP-OTHER",
+      title: "Untargeted administrative alert",
+      message: "Alert details",
+      timestamp: new Date().toISOString(),
+      read: false,
+      type: "critical",
+    },
+  ]));
+  const app = await startApp(dataDir);
+  t.after(async () => {
+    await stopApp(app.child);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  const student = await request(app.baseUrl, "/api/auth/demo-login", {
+    method: "POST",
+    body: { account: "student", rollNumber: "23AIML001" },
+  });
+  const studentNotifications = await request(app.baseUrl, "/api/notifications", {
+    token: student.data.token,
+  });
+  assert.deepEqual(studentNotifications.data.notifications, []);
+
+  const sectorAdmin = await request(app.baseUrl, "/api/auth/admin-login", {
+    method: "POST",
+    body: {
+      email: "it.admin@college.edu",
+      password: sectorCredentials["it.admin@college.edu"],
+    },
+  });
+  const sectorNotifications = await request(app.baseUrl, "/api/notifications", {
+    token: sectorAdmin.data.token,
+  });
+  assert.deepEqual(sectorNotifications.data.notifications, []);
+
+  const mainAdmin = await request(app.baseUrl, "/api/auth/admin-login", {
+    method: "POST",
+    body: { email: "admin@college.edu", password: "test-legacy-admin-password" },
+  });
+  const adminNotifications = await request(app.baseUrl, "/api/notifications", {
+    token: mainAdmin.data.token,
+  });
+  assert.equal(adminNotifications.data.notifications.some((notification) =>
+    notification.id === "untargeted-admin"), true);
+});
+
+test("failed rate-limit persistence restores the previous in-memory attempt count", async (t) => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), `campus-ai-rate-limit-write-${randomUUID()}-`));
+  const app = await startApp(dataDir);
+  t.after(async () => {
+    await stopApp(app.child);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  const loginBody = { email: "admin@college.edu", password: "incorrect-password" };
+  assert.equal((await request(app.baseUrl, "/api/auth/admin-login", {
+    method: "POST",
+    body: loginBody,
+  })).response.status, 401);
+
+  const rateLimitPath = path.join(dataDir, "login-attempts.json");
+  unlinkSync(rateLimitPath);
+  mkdirSync(rateLimitPath);
+  assert.equal((await request(app.baseUrl, "/api/auth/admin-login", {
+    method: "POST",
+    body: loginBody,
+  })).response.status, 503);
+
+  rmdirSync(rateLimitPath);
+  assert.equal((await request(app.baseUrl, "/api/auth/admin-login", {
+    method: "POST",
+    body: loginBody,
+  })).response.status, 401);
+  const persistedAttempts = JSON.parse(readFileSync(rateLimitPath, "utf8"));
+  assert.equal(persistedAttempts.length, 1);
+  assert.equal(persistedAttempts[0].count, 2);
 });

@@ -9,7 +9,11 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const configuredPort = process.env.PORT?.trim();
+const PORT = configuredPort ? Number(configuredPort) : 3000;
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  throw new Error("PORT must be an integer between 1 and 65535.");
+}
 const isProduction = process.env.NODE_ENV === "production";
 app.set("trust proxy", isProduction ? 1 : false);
 const AUTH_SECRET = process.env.AUTH_SECRET || (process.env.NODE_ENV === "production" ? "" : crypto.randomBytes(32).toString("hex"));
@@ -18,14 +22,6 @@ const IS_DEMO_MODE = !isProduction && configuredDemoMode !== "false";
 const DATA_DIR = process.env.DATA_DIR?.trim()
   ? path.resolve(process.env.DATA_DIR.trim())
   : path.join(process.cwd(), "data");
-try {
-  fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
-  const storageProbe = path.join(DATA_DIR, `.write-check-${process.pid}-${crypto.randomUUID()}`);
-  fs.writeFileSync(storageProbe, "", { flag: "wx", mode: 0o600 });
-  fs.unlinkSync(storageProbe);
-} catch {
-  throw new Error("DATA_DIR must be a writable persistent directory.");
-}
 const EMAIL_PROVIDER = process.env.EMAIL_PROVIDER?.trim().toLowerCase() || "";
 const RESEND_API_KEY = process.env.RESEND_API_KEY?.trim() || "";
 const OTP_FROM_EMAIL = process.env.OTP_FROM_EMAIL?.trim() || "";
@@ -76,17 +72,25 @@ const missingAuthConfig = [
 if (missingAuthConfig.length > 0) {
   throw new Error(`Missing required authentication environment variables: ${missingAuthConfig.join(", ")}`);
 }
-if (SUPER_ADMIN_PASSWORD && SUPER_ADMIN_PASSWORD.length < 12) {
-  throw new Error("SUPER_ADMIN_PASSWORD must be at least 12 characters long.");
+if (SUPER_ADMIN_PASSWORD && (SUPER_ADMIN_PASSWORD.length < 12 || SUPER_ADMIN_PASSWORD.length > 200)) {
+  throw new Error("SUPER_ADMIN_PASSWORD must be between 12 and 200 characters long.");
+}
+if (SUPER_ADMIN_NAME && SUPER_ADMIN_NAME.length > 100) {
+  throw new Error("SUPER_ADMIN_NAME must be 100 characters or fewer.");
 }
 if (SUPER_ADMIN_EMAIL && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(SUPER_ADMIN_EMAIL)) {
   throw new Error("SUPER_ADMIN_EMAIL must be a valid email address.");
 }
-if (isProduction && Buffer.byteLength(AUTH_SECRET, "utf8") < 32) {
-  throw new Error("AUTH_SECRET must contain at least 32 bytes in production.");
+if (isProduction && (
+  Buffer.byteLength(AUTH_SECRET, "utf8") < 32 ||
+  AUTH_SECRET !== AUTH_SECRET.trim() ||
+  new Set(AUTH_SECRET).size < 16 ||
+  /^(your|change.?me|replace|example|test|placeholder|dummy)[-_ ]/i.test(AUTH_SECRET)
+)) {
+  throw new Error("AUTH_SECRET must be a non-placeholder, high-entropy value of at least 32 bytes in production.");
 }
-if (isProduction && ADMIN_PASSWORD.length < 12) {
-  throw new Error("ADMIN_PASSWORD must be at least 12 characters long in production.");
+if (isProduction && (ADMIN_PASSWORD.length < 12 || ADMIN_PASSWORD.length > 200)) {
+  throw new Error("ADMIN_PASSWORD must be between 12 and 200 characters long in production.");
 }
 if (configuredDemoMode && !["true", "false"].includes(configuredDemoMode)) {
   throw new Error("DEMO_MODE must be set to true or false.");
@@ -103,6 +107,12 @@ if (EMAIL_PROVIDER && EMAIL_PROVIDER !== "resend") {
 if (EMAIL_PROVIDER === "resend" && (!RESEND_API_KEY || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(OTP_FROM_EMAIL))) {
   throw new Error("Resend delivery requires RESEND_API_KEY and a valid OTP_FROM_EMAIL sender address.");
 }
+if (EMAIL_PROVIDER === "resend" && (
+  !/^re_[A-Za-z0-9_-]{8,}$/.test(RESEND_API_KEY) ||
+  /^re_(your|replace|example|placeholder|dummy|test)(?:[-_]|$)/i.test(RESEND_API_KEY)
+)) {
+  throw new Error("RESEND_API_KEY must have the expected Resend API key format.");
+}
 if (isProduction && EMAIL_PROVIDER !== "resend") {
   throw new Error("Configure EMAIL_PROVIDER=resend for production student email verification.");
 }
@@ -111,6 +121,15 @@ if (!isProduction && (RESEND_API_KEY || OTP_FROM_EMAIL) && EMAIL_PROVIDER !== "r
 }
 if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ADMIN_EMAIL)) {
   throw new Error("ADMIN_EMAIL must be a valid email address.");
+}
+try {
+  fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") fs.chmodSync(DATA_DIR, 0o700);
+  const storageProbe = path.join(DATA_DIR, `.write-check-${process.pid}-${crypto.randomUUID()}`);
+  fs.writeFileSync(storageProbe, "", { flag: "wx", mode: 0o600 });
+  fs.unlinkSync(storageProbe);
+} catch {
+  throw new Error("DATA_DIR must be a writable persistent directory.");
 }
 
 type UserRole = "student" | "warden" | "staff" | "admin" | "college_admin" | "super_admin" | "sector_admin" | "main_admin";
@@ -715,13 +734,15 @@ function rateLimitLogin(req: express.Request, res: express.Response, next: expre
   if (!limit && loginRateLimitMap.size >= 10000) {
     return res.status(503).json({ error: "Login is temporarily unavailable. Please try again later." });
   }
+  const previousLimit = limit ? { ...limit } : undefined;
   loginRateLimitMap.set(key, limit && now < limit.resetTime
     ? { count: limit.count + 1, resetTime: limit.resetTime }
     : { count: 1, resetTime: now + 15 * 60 * 1000 });
   try {
     saveLoginAttempts();
   } catch (error) {
-    loginRateLimitMap.delete(key);
+    if (previousLimit) loginRateLimitMap.set(key, previousLimit);
+    else loginRateLimitMap.delete(key);
     console.error("Unable to persist authentication rate limits:", error);
     return res.status(503).json({ error: "Authentication is temporarily unavailable. Please try again later." });
   }
@@ -789,8 +810,8 @@ interface OTPRecord {
 const activeOtps = new Map<string, OTPRecord>();
 const otpCooldowns = new Map<string, number>();
 
-function otpIdentityKey(rollNumber: string): string {
-  return crypto.createHmac("sha256", AUTH_SECRET).update(`otp-roll:${rollNumber}`).digest("hex");
+function otpIdentityKey(rollNumber: string, email: string): string {
+  return crypto.createHmac("sha256", AUTH_SECRET).update(`otp-identity:${rollNumber}\n${email}`).digest("hex");
 }
 
 function otpDigest(rollNumber: string, studentId: string, email: string, otp: string): string {
@@ -988,11 +1009,13 @@ interface DBNotification {
 function canAccessNotification(notification: DBNotification, user: AuthenticatedUser): boolean {
   if (notification.recipientType === "student") {
     return user.role === "student" &&
-      (!notification.recipientId || notification.recipientId === user.studentId);
+      Boolean(notification.recipientId && notification.recipientId === user.studentId);
   }
   if (user.role === "student") return false;
-  // Untargeted administrator notifications are visible to all administrators.
-  if (!notification.recipientId) return true;
+  if (!notification.recipientId) {
+    return user.role === "main_admin" || user.role === "admin" ||
+      user.role === "college_admin" || user.role === "super_admin";
+  }
   return notification.recipientId === user.studentId ||
     notification.recipientId === user.email ||
     (user.role === "main_admin" && notification.recipientId === "admin-main_admin-main");
@@ -1291,9 +1314,10 @@ app.post("/api/auth/send-otp", rateLimitLogin, async (req, res) => {
   const cleanRoll = typeof rollNumber === "string" ? rollNumber.trim().toUpperCase() : "";
   const cleanEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
   const cleanPhone = typeof phone === "string" ? phone.trim().replace(/\D/g, "") : "";
+  // Keep unknown identities and delivery failures indistinguishable from accepted requests.
   const genericResponse = {
     success: true,
-    message: "If the details match an eligible student account, a verification code will be sent.",
+    message: "If these details match a registered student and email delivery is available, a verification code may arrive shortly.",
     maskedEmail: cleanEmail.includes("@") ? maskEmail(cleanEmail) : "",
     expiresInSeconds: 300,
   };
@@ -1304,7 +1328,10 @@ app.post("/api/auth/send-otp", rateLimitLogin, async (req, res) => {
   }
 
   const now = Date.now();
-  const cooldownKey = otpIdentityKey(cleanRoll);
+  for (const [key, expiresAt] of otpCooldowns) {
+    if (expiresAt <= now) otpCooldowns.delete(key);
+  }
+  const cooldownKey = otpIdentityKey(cleanRoll, cleanEmail);
   const nextAllowedAt = otpCooldowns.get(cooldownKey);
   if (nextAllowedAt && now < nextAllowedAt) {
     return res.status(429).json({ error: "Please wait before requesting another verification code." });
@@ -1323,10 +1350,10 @@ app.post("/api/auth/send-otp", rateLimitLogin, async (req, res) => {
       await deliverStudentOtp(cleanEmail, generatedOtp);
     } catch {
       console.error("Student OTP email delivery failed.");
-      return res.status(503).json({ error: "Unable to send a verification code right now. Please try again later." });
+      return res.status(202).json(genericResponse);
     }
   } else if (!IS_DEMO_MODE) {
-    return res.status(503).json({ error: "Student email verification is temporarily unavailable." });
+    return res.status(202).json(genericResponse);
   }
 
   activeOtps.set(cleanRoll, {
@@ -1482,10 +1509,8 @@ app.post("/api/auth/verify-otp", rateLimitLogin, (req, res) => {
     crypto.timingSafeEqual(Buffer.from(stored.otpDigest, "hex"), Buffer.from(submittedDigest, "hex"));
   if (!challengeStillBound || !otpMatches) {
     if (stored.attempts >= 5) activeOtps.delete(cleanRoll);
-    return res.status(stored.attempts >= 5 ? 429 : 400).json({
-      error: stored.attempts >= 5
-        ? "Too many attempts. Request a new verification code."
-        : "Invalid or expired verification code. Request a new code and try again.",
+    return res.status(400).json({
+      error: "Invalid or expired verification code. Request a new code and try again.",
     });
   }
 
@@ -1584,7 +1609,7 @@ function parseCredentialMap(
   const allowed = new Set(allowedEmails);
   if (entries.some(([email, password]) =>
     email !== normalizeEmail(email) || !allowed.has(email) ||
-    typeof password !== "string" || password.length < (isProduction ? 12 : 1))) {
+    typeof password !== "string" || password.length < (isProduction ? 12 : 1) || password.length > 200)) {
     throw new Error(`${label} contains an unsupported account or invalid password.`);
   }
   if (new Set(entries.map(([, password]) => password)).size !== entries.length) {
@@ -2472,6 +2497,9 @@ app.patch("/api/complaints/:id/status", requireAuth, (req, res) => {
 
 // GET /api/admin/students - Protected with Authentication & Admin Authorization
 app.get("/api/admin/students", requireAuth, requireAdmin, (req, res) => {
+  if (req.user!.role === "sector_admin") {
+    return res.status(403).json({ error: "Student directory access requires college-level administrator privileges." });
+  }
   try {
     const csvStudents = readStudentsFromCsv();
     const studentList = csvStudents.map(s => {
