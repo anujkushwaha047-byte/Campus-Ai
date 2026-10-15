@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { createHmac, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 const authSecret = "isolated-test-secret-with-at-least-32-bytes";
 const sectorEmails = [
@@ -52,6 +53,31 @@ async function freePort() {
 async function startApp(dataDir, production = false, overrides = {}) {
   const port = await freePort();
   const origin = "https://campus.example.test";
+  const providerStubPath = path.join(dataDir, `resend-stub-${randomUUID()}.mjs`);
+  const otpCapturePath = path.join(dataDir, "test-only-otp-capture.txt");
+  const otpClockPath = path.join(dataDir, "test-only-clock-offset.txt");
+  const providerStatusPath = path.join(dataDir, "test-only-provider-status.txt");
+  writeFileSync(providerStubPath, `
+    import { existsSync, readFileSync, writeFileSync } from "node:fs";
+    const realFetch = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = async (input, init) => {
+      if (String(input) !== "https://api.resend.com/emails") return realFetch(input, init);
+      const payload = JSON.parse(init.body);
+      const code = payload.text.match(/code is ([0-9]{6})/)?.[1];
+      if (code) writeFileSync(process.env.OTP_TEST_CAPTURE_PATH, code, { mode: 0o600 });
+      const status = existsSync(process.env.OTP_TEST_PROVIDER_STATUS_PATH)
+        ? Number(readFileSync(process.env.OTP_TEST_PROVIDER_STATUS_PATH, "utf8"))
+        : 200;
+      return new Response(status >= 200 && status < 300 ? '{"id":"test-message"}' : '{"message":"simulated failure"}', {
+        status,
+        headers: { "Content-Type": "application/json" }
+      });
+    };
+    const realNow = Date.now.bind(Date);
+    Date.now = () => realNow() + (existsSync(process.env.OTP_TEST_CLOCK_PATH)
+      ? Number(readFileSync(process.env.OTP_TEST_CLOCK_PATH, "utf8"))
+      : 0);
+  `);
   const env = {
     ...process.env,
     PORT: String(port),
@@ -67,8 +93,15 @@ async function startApp(dataDir, production = false, overrides = {}) {
     SUPER_ADMIN_NAME: "Test Super Admin",
     SUPER_ADMIN_EMAIL: "superadmin@test.example",
     SUPER_ADMIN_PASSWORD: "test-super-admin-password",
+    EMAIL_PROVIDER: production ? "resend" : "",
+    RESEND_API_KEY: production ? "test-resend-api-key" : "",
+    OTP_FROM_EMAIL: production ? "noreply@campus.example.test" : "",
     APP_URL: production ? origin : "",
     CORS_ALLOWED_ORIGINS: "",
+    OTP_TEST_CAPTURE_PATH: otpCapturePath,
+    OTP_TEST_CLOCK_PATH: otpClockPath,
+    OTP_TEST_PROVIDER_STATUS_PATH: providerStatusPath,
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${pathToFileURL(providerStubPath).href}`].filter(Boolean).join(" "),
     ...overrides,
   };
   const child = spawn(process.execPath, ["--import", "tsx", "server.ts"], {
@@ -99,7 +132,27 @@ async function startApp(dataDir, production = false, overrides = {}) {
     child.kill();
     throw new Error(`Test server failed to start. Process output: ${output}`);
   }
-  return { child, baseUrl, origin, output: () => output };
+  return { child, baseUrl, origin, output: () => output, otpCapturePath, otpClockPath, providerStatusPath };
+}
+
+async function startOtpApp(t) {
+  const dataDir = mkdtempSync(path.join(tmpdir(), `campus-ai-otp-${randomUUID()}-`));
+  writeFileSync(path.join(dataDir, "students.csv"),
+    "student_id,roll_number,email,phone,email_verified,registration_date\n" +
+    "STU001,23AIML001,student@college.edu.in,9876543210,true,2026-08-15\n" +
+    "STU002,2021MEB021,ankit.singh@college.edu.in,9876501234,true,2026-08-15\n" +
+    "STU003,2023ECE052,abhinav.tiwari@college.edu.in,9123456780,true,2026-08-15\n");
+  const app = await startApp(dataDir, false, {
+    DEMO_MODE: "false",
+    EMAIL_PROVIDER: "resend",
+    RESEND_API_KEY: "test-resend-api-key",
+    OTP_FROM_EMAIL: "noreply@campus.example.test",
+  });
+  t.after(async () => {
+    await stopApp(app.child);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  return app;
 }
 
 async function stopApp(child) {
@@ -133,6 +186,19 @@ function expiredToken() {
     studentId: "STU001",
     rollNumber: "23AIML001",
     exp: Date.now() - 1000,
+  })).toString("base64url");
+  const signature = createHmac("sha256", authSecret).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function legacyTokenWithoutSessionVersion() {
+  const payload = Buffer.from(JSON.stringify({
+    email: "legacy@test.example",
+    name: "Legacy",
+    role: "student",
+    studentId: "STU001",
+    rollNumber: "23AIML001",
+    exp: Date.now() + 60_000,
   })).toString("base64url");
   const signature = createHmac("sha256", authSecret).update(payload).digest("base64url");
   return `${payload}.${signature}`;
@@ -185,6 +251,9 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
 
   assert.equal((await request(app.baseUrl, "/api/auth/session", { token: "invalid-token" })).response.status, 401);
   assert.equal((await request(app.baseUrl, "/api/auth/session", { token: expiredToken() })).response.status, 401);
+  assert.equal((await request(app.baseUrl, "/api/auth/session", {
+    token: legacyTokenWithoutSessionVersion(),
+  })).response.status, 401);
   assert.equal((await request(app.baseUrl, "/api/admin/accounts", {
     token: studentToken,
     headers: { "x-user-role": "super_admin" },
@@ -212,12 +281,12 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
   const otpMismatch = await request(app.baseUrl, "/api/auth/send-otp", {
     method: "POST",
     body: {
-      rollNumber: "23AIML001",
+      rollNumber: "UNKNOWN-OTP-ROLL",
       email: "attacker@college.edu.in",
       phone: "9876543210",
     },
   });
-  assert.equal(otpMismatch.response.status, 403);
+  assert.equal(otpMismatch.response.status, 202);
   const demoOtp = await request(app.baseUrl, "/api/auth/send-otp", {
     method: "POST",
     body: {
@@ -226,8 +295,29 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
       phone: "9876543210",
     },
   });
-  assert.equal(demoOtp.response.status, 200);
+  assert.equal(demoOtp.response.status, 202);
   assert.match(demoOtp.data.demoOtp, /^\d{6}$/);
+  const verifiedDemoStudent = await request(app.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "student@college.edu.in",
+      phone: "9876543210",
+      otp: demoOtp.data.demoOtp,
+    },
+  });
+  assert.equal(verifiedDemoStudent.response.status, 200);
+  assert.equal((await request(app.baseUrl, "/api/auth/session", {
+    token: verifiedDemoStudent.data.token,
+  })).response.status, 200);
+  assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "student@college.edu.in",
+      otp: demoOtp.data.demoOtp,
+    },
+  })).response.status, 400);
 
   const adminLogin = await request(app.baseUrl, "/api/auth/demo-login", {
     method: "POST",
@@ -446,8 +536,22 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
       phone: "9876543210",
     },
   });
-  assert.equal(productionOtp.response.status, 503);
+  assert.equal(productionOtp.response.status, 202);
   assert.equal(productionOtp.data.demoOtp, undefined);
+  assert.ok(existsSync(productionApp.otpCapturePath));
+  const productionOtpCode = readFileSync(productionApp.otpCapturePath, "utf8");
+  const productionOtpVerification = await request(productionApp.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "student@college.edu.in",
+      otp: productionOtpCode,
+    },
+  });
+  assert.equal(productionOtpVerification.response.status, 200);
+  assert.equal((await request(productionApp.baseUrl, "/api/auth/session", {
+    token: productionOtpVerification.data.token,
+  })).response.status, 200);
 
   let limitedLogin;
   for (let attempt = 0; attempt < 12; attempt += 1) {
@@ -458,4 +562,161 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
     if (limitedLogin.response.status === 429) break;
   }
   assert.equal(limitedLogin.response.status, 429);
+});
+
+test("OTP delivery succeeds only after provider acceptance and verification is single-use", async (t) => {
+  const app = await startOtpApp(t);
+  const send = await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "student@college.edu.in",
+      phone: "9876543210",
+    },
+  });
+  assert.equal(send.response.status, 202);
+  assert.equal(send.data.demoOtp, undefined);
+  assert.ok(existsSync(app.otpCapturePath));
+  const code = readFileSync(app.otpCapturePath, "utf8");
+  assert.match(code, /^\d{6}$/);
+
+  const cooldown = await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "student@college.edu.in",
+      phone: "9876543210",
+    },
+  });
+  assert.equal(cooldown.response.status, 429);
+
+  const verified = await request(app.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "student@college.edu.in",
+      otp: code,
+    },
+  });
+  assert.equal(verified.response.status, 200);
+  assert.equal((await request(app.baseUrl, "/api/auth/session", {
+    token: verified.data.token,
+  })).response.status, 200);
+  assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "student@college.edu.in",
+      otp: code,
+    },
+  })).response.status, 400);
+  assert.equal(app.output().includes(code), false);
+
+  writeFileSync(app.providerStatusPath, "503");
+  const failedDelivery = await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "2021MEB021",
+      email: "ankit.singh@college.edu.in",
+      phone: "9876501234",
+    },
+  });
+  assert.equal(failedDelivery.response.status, 503);
+  assert.equal(failedDelivery.data.demoOtp, undefined);
+  assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "2021MEB021",
+      email: "ankit.singh@college.edu.in",
+      otp: readFileSync(app.otpCapturePath, "utf8"),
+    },
+  })).response.status, 400);
+});
+
+test("OTP expiry and exact registered identity binding are enforced", async (t) => {
+  const app = await startOtpApp(t);
+  const sent = await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "student@college.edu.in",
+      phone: "9876543210",
+    },
+  });
+  assert.equal(sent.response.status, 202);
+  const expiredCode = readFileSync(app.otpCapturePath, "utf8");
+  writeFileSync(app.otpClockPath, "301000");
+  assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: { rollNumber: "23AIML001", email: "student@college.edu.in", otp: expiredCode },
+  })).response.status, 400);
+});
+
+test("OTP email and roll-number binding, attempt limit, and request rate limit", async (t) => {
+  const app = await startOtpApp(t);
+  const firstSend = await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "student@college.edu.in",
+      phone: "9876543210",
+    },
+  });
+  assert.equal(firstSend.response.status, 202);
+  const firstCode = readFileSync(app.otpCapturePath, "utf8");
+  assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: { rollNumber: "23AIML001", email: "ankit.singh@college.edu.in", otp: firstCode },
+  })).response.status, 400);
+  assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: { rollNumber: "23AIML001", email: "student@college.edu.in", otp: firstCode },
+  })).response.status, 200);
+
+  const secondSend = await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "2021MEB021",
+      email: "ankit.singh@college.edu.in",
+      phone: "9876501234",
+    },
+  });
+  assert.equal(secondSend.response.status, 202);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
+      method: "POST",
+      body: { rollNumber: "2021MEB021", email: "ankit.singh@college.edu.in", otp: "000000" },
+    })).response.status, 400);
+  }
+  assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: { rollNumber: "2021MEB021", email: "ankit.singh@college.edu.in", otp: "000000" },
+  })).response.status, 429);
+  assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: { rollNumber: "2021MEB021", email: "ankit.singh@college.edu.in", otp: "000000" },
+  })).response.status, 400);
+});
+
+test("OTP send requests are rate limited per client", async (t) => {
+  const app = await startOtpApp(t);
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const limited = await request(app.baseUrl, "/api/auth/send-otp", {
+      method: "POST",
+      body: {
+        rollNumber: `UNKNOWN-${attempt}`,
+        email: "unknown@college.edu.in",
+        phone: "9876543210",
+      },
+    });
+    assert.equal(limited.response.status, 202);
+  }
+  assert.equal((await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "UNKNOWN-LAST",
+      email: "unknown@college.edu.in",
+      phone: "9876543210",
+    },
+  })).response.status, 429);
 });

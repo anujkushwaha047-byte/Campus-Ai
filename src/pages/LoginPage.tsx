@@ -684,7 +684,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                       Verify Your College Email
                     </h3>
                     <p className="text-xs text-slate-500 mt-1">
-                      We have dispatched a 6-digit verification code to your official email:
+                      If the details match an eligible student account, a 6-digit code will be sent:
                     </p>
                     <div className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-[#146EF5] font-mono text-xs font-bold">
                       <Mail className="w-3.5 h-3.5" />

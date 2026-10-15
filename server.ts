@@ -13,7 +13,22 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const isProduction = process.env.NODE_ENV === "production";
 app.set("trust proxy", isProduction ? 1 : false);
 const AUTH_SECRET = process.env.AUTH_SECRET || (process.env.NODE_ENV === "production" ? "" : crypto.randomBytes(32).toString("hex"));
-const IS_DEMO_MODE = process.env.NODE_ENV !== "production" && process.env.DEMO_MODE !== "false";
+const configuredDemoMode = process.env.DEMO_MODE?.trim().toLowerCase();
+const IS_DEMO_MODE = !isProduction && configuredDemoMode !== "false";
+const DATA_DIR = process.env.DATA_DIR?.trim()
+  ? path.resolve(process.env.DATA_DIR.trim())
+  : path.join(process.cwd(), "data");
+try {
+  fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+  const storageProbe = path.join(DATA_DIR, `.write-check-${process.pid}-${crypto.randomUUID()}`);
+  fs.writeFileSync(storageProbe, "", { flag: "wx", mode: 0o600 });
+  fs.unlinkSync(storageProbe);
+} catch {
+  throw new Error("DATA_DIR must be a writable persistent directory.");
+}
+const EMAIL_PROVIDER = process.env.EMAIL_PROVIDER?.trim().toLowerCase() || "";
+const RESEND_API_KEY = process.env.RESEND_API_KEY?.trim() || "";
+const OTP_FROM_EMAIL = process.env.OTP_FROM_EMAIL?.trim() || "";
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@college.edu").toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const STAFF_PASSWORD = process.env.STAFF_PASSWORD || "";
@@ -31,7 +46,7 @@ const TRUSTED_ORIGINS = new Set(configuredOrigins.map((origin) => {
   } catch {
     throw new Error("APP_URL and CORS_ALLOWED_ORIGINS must contain valid origins.");
   }
-  if (parsed.origin !== origin.replace(/\/$/, "") || parsed.username || parsed.password ||
+  if (parsed.origin !== origin || parsed.username || parsed.password ||
       parsed.pathname !== "/" || parsed.search || parsed.hash ||
       (isProduction && parsed.protocol !== "https:")) {
     throw new Error("Configured CORS origins must be exact origins without paths, credentials, query strings, or fragments; production origins must use HTTPS.");
@@ -42,7 +57,17 @@ if (isProduction && TRUSTED_ORIGINS.size === 0) {
   throw new Error("Configure APP_URL or CORS_ALLOWED_ORIGINS with at least one trusted HTTPS origin in production.");
 }
 const missingAuthConfig = [
-  ...(isProduction ? ["AUTH_SECRET", "ADMIN_PASSWORD", "STAFF_CREDENTIALS", "SECTOR_ADMIN_CREDENTIALS"] : []),
+  ...(isProduction ? [
+    "APP_URL",
+    "AUTH_SECRET",
+    "ADMIN_PASSWORD",
+    "STAFF_CREDENTIALS",
+    "SECTOR_ADMIN_CREDENTIALS",
+    "EMAIL_PROVIDER",
+    "RESEND_API_KEY",
+    "OTP_FROM_EMAIL",
+    "DATA_DIR",
+  ] : []),
   ...(["SUPER_ADMIN_NAME", "SUPER_ADMIN_EMAIL", "SUPER_ADMIN_PASSWORD"].some((key) => Boolean(process.env[key]))
     ? ["SUPER_ADMIN_NAME", "SUPER_ADMIN_EMAIL", "SUPER_ADMIN_PASSWORD"].filter((key) => !process.env[key]?.trim())
     : isProduction ? ["SUPER_ADMIN_NAME", "SUPER_ADMIN_EMAIL", "SUPER_ADMIN_PASSWORD"] : []),
@@ -54,11 +79,38 @@ if (missingAuthConfig.length > 0) {
 if (SUPER_ADMIN_PASSWORD && SUPER_ADMIN_PASSWORD.length < 12) {
   throw new Error("SUPER_ADMIN_PASSWORD must be at least 12 characters long.");
 }
+if (SUPER_ADMIN_EMAIL && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(SUPER_ADMIN_EMAIL)) {
+  throw new Error("SUPER_ADMIN_EMAIL must be a valid email address.");
+}
 if (isProduction && Buffer.byteLength(AUTH_SECRET, "utf8") < 32) {
   throw new Error("AUTH_SECRET must contain at least 32 bytes in production.");
 }
 if (isProduction && ADMIN_PASSWORD.length < 12) {
   throw new Error("ADMIN_PASSWORD must be at least 12 characters long in production.");
+}
+if (configuredDemoMode && !["true", "false"].includes(configuredDemoMode)) {
+  throw new Error("DEMO_MODE must be set to true or false.");
+}
+if (isProduction && configuredDemoMode !== "false") {
+  throw new Error("DEMO_MODE must be explicitly set to false in production.");
+}
+if (isProduction && !path.isAbsolute(process.env.DATA_DIR?.trim() || "")) {
+  throw new Error("DATA_DIR must be an absolute persistent-storage path in production.");
+}
+if (EMAIL_PROVIDER && EMAIL_PROVIDER !== "resend") {
+  throw new Error("EMAIL_PROVIDER must be set to the supported value 'resend'.");
+}
+if (EMAIL_PROVIDER === "resend" && (!RESEND_API_KEY || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(OTP_FROM_EMAIL))) {
+  throw new Error("Resend delivery requires RESEND_API_KEY and a valid OTP_FROM_EMAIL sender address.");
+}
+if (isProduction && EMAIL_PROVIDER !== "resend") {
+  throw new Error("Configure EMAIL_PROVIDER=resend for production student email verification.");
+}
+if (!isProduction && (RESEND_API_KEY || OTP_FROM_EMAIL) && EMAIL_PROVIDER !== "resend") {
+  throw new Error("Set EMAIL_PROVIDER=resend when configuring Resend credentials.");
+}
+if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ADMIN_EMAIL)) {
+  throw new Error("ADMIN_EMAIL must be a valid email address.");
 }
 
 type UserRole = "student" | "warden" | "staff" | "admin" | "college_admin" | "super_admin" | "sector_admin" | "main_admin";
@@ -122,7 +174,6 @@ app.use((req, res, next) => {
 // ==========================================
 // 2. DATA STORAGE ENGINE (data/)
 // ==========================================
-const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const STUDENTS_CSV_PATH = path.join(DATA_DIR, "students.csv");
 const COMPLAINTS_JSON_PATH = path.join(DATA_DIR, "complaints.json");
 const NOTIFICATIONS_JSON_PATH = path.join(DATA_DIR, "notifications.json");
@@ -373,13 +424,15 @@ function initStorage() {
   // Initialize students.csv with demonstration records if not present
   if (!fs.existsSync(STUDENTS_CSV_PATH)) {
     const header = "student_id,roll_number,email,phone,email_verified,registration_date\n";
-    const initialRows = [
-      "STU001,23AIML001,student@college.edu.in,9876543210,true,2026-08-15",
-      "STU002,2021MEB021,ankit.singh@college.edu.in,9876501234,true,2026-08-15",
-      "STU003,2023ECE052,abhinav.tiwari@college.edu.in,9123456780,true,2026-08-15",
-      "STU004,2022CSB1044,rahul.sharma@campus.edu.in,9876543210,true,2026-08-15",
-      "STU005,2022IT089,adheshwari.gupta@college.edu.in,9765432109,true,2026-08-15"
-    ].join("\n") + "\n";
+    const initialRows = IS_DEMO_MODE
+      ? [
+        "STU001,23AIML001,student@college.edu.in,9876543210,true,2026-08-15",
+        "STU002,2021MEB021,ankit.singh@college.edu.in,9876501234,true,2026-08-15",
+        "STU003,2023ECE052,abhinav.tiwari@college.edu.in,9123456780,true,2026-08-15",
+        "STU004,2022CSB1044,rahul.sharma@campus.edu.in,9876543210,true,2026-08-15",
+        "STU005,2022IT089,adheshwari.gupta@college.edu.in,9765432109,true,2026-08-15"
+      ].join("\n") + "\n"
+      : "";
     writeFileAtomically(STUDENTS_CSV_PATH, header + initialRows);
   }
 }
@@ -505,6 +558,7 @@ const studentAcademicDirectory: Record<string, { name: string; department: strin
 // 3. CRYPTOGRAPHIC AUTHENTICATION TOKENS
 // ==========================================
 interface UserPayload {
+  sessionVersion: 2;
   studentId?: string;  // Optional for admin tokens
   rollNumber?: string; // Optional for admin tokens
   accountVersion?: number;
@@ -513,15 +567,16 @@ interface UserPayload {
   role: UserRole;
   sector?: string;
   department?: string;
-  authSource?: "demo" | "static";
+  authSource?: "demo" | "static" | "otp";
   credentialVersion?: string;
   exp: number;
 }
 
 // Generate an HMAC-SHA256 signed session token
-function generateAuthToken(user: Omit<UserPayload, "exp">): string {
+function generateAuthToken(user: Omit<UserPayload, "exp" | "sessionVersion">): string {
   const payload: UserPayload = {
     ...user,
+    sessionVersion: 2,
     exp: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
   };
   const dataB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -550,7 +605,8 @@ function verifyAuthToken(token: string): UserPayload | null {
 
     const payload: UserPayload = JSON.parse(Buffer.from(dataB64, "base64url").toString("utf8"));
     const validRoles: UserRole[] = ["student", "warden", "staff", "admin", "college_admin", "super_admin", "sector_admin", "main_admin"];
-    if (!payload.exp || Date.now() > payload.exp || !validRoles.includes(payload.role) || !payload.email) return null;
+    if (payload.sessionVersion !== 2 || !payload.exp || Date.now() > payload.exp ||
+        !validRoles.includes(payload.role) || !payload.email) return null;
     if (payload.authSource === "demo" && !IS_DEMO_MODE) return null;
     if (payload.authSource === "static") {
       const password = payload.role === "warden" || payload.role === "staff"
@@ -562,7 +618,8 @@ function verifyAuthToken(token: string): UserPayload | null {
           : "";
       if (!password || payload.credentialVersion !== credentialVersion(password)) return null;
     }
-    if (payload.authSource !== undefined && payload.authSource !== "demo" && payload.authSource !== "static") return null;
+    if (payload.authSource !== undefined &&
+        payload.authSource !== "demo" && payload.authSource !== "static" && payload.authSource !== "otp") return null;
 
     return payload;
   } catch (err) {
@@ -721,15 +778,64 @@ function rateLimitAI(req: express.Request, res: express.Response, next: express.
 // 4. OTP MANAGEMENT & DISPATCH
 // ==========================================
 interface OTPRecord {
-  otp: string;
+  otpDigest: string;
+  studentId: string;
   email: string;
-  phone: string;
   rollNumber: string;
   expiresAt: number;
   attempts: number;
   createdAt: number;
 }
 const activeOtps = new Map<string, OTPRecord>();
+const otpCooldowns = new Map<string, number>();
+
+function otpIdentityKey(rollNumber: string): string {
+  return crypto.createHmac("sha256", AUTH_SECRET).update(`otp-roll:${rollNumber}`).digest("hex");
+}
+
+function otpDigest(rollNumber: string, studentId: string, email: string, otp: string): string {
+  return crypto.createHmac("sha256", AUTH_SECRET)
+    .update(`${rollNumber}\n${studentId}\n${email}\n${otp}`)
+    .digest("hex");
+}
+
+async function deliverStudentOtp(email: string, otp: string): Promise<void> {
+  if (EMAIL_PROVIDER !== "resend" || !RESEND_API_KEY || !OTP_FROM_EMAIL) {
+    throw new Error("Email delivery is not configured.");
+  }
+  let response: Response;
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: OTP_FROM_EMAIL,
+        to: [email],
+        subject: "Your CampusCare verification code",
+        text: `Your CampusCare verification code is ${otp}. It expires in 5 minutes. If you did not request this code, you can ignore this email.`,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    throw new Error("The email provider could not be reached.");
+  }
+  if (!response.ok) throw new Error("The email provider rejected the message.");
+}
+
+function matchingRegisteredStudent(rollNumber: string, email: string): StudentCSVItem | null {
+  const students = readStudentsFromCsv();
+  const matchesByRoll = students.filter((student) => student.roll_number.toUpperCase() === rollNumber);
+  const matchesByEmail = students.filter((student) => student.email.toLowerCase() === email);
+  const matchesById = students.filter((student) => student.student_id === matchesByRoll[0]?.student_id);
+  if (matchesByRoll.length !== 1 || matchesByEmail.length !== 1 ||
+      matchesByRoll[0].student_id !== matchesByEmail[0].student_id || matchesById.length !== 1) {
+    return null;
+  }
+  return matchesByRoll[0];
+}
 
 function maskEmail(email: string): string {
   const parts = email.split("@");
@@ -1178,83 +1284,64 @@ app.post("/api/auth/logout", requireAuth, (req, res) => {
   return res.json({ success: true });
 });
 
-// Send OTP (demo only until a real mail delivery provider is configured)
-app.post("/api/auth/send-otp", rateLimitLogin, (req, res) => {
+// Send OTP to the registered student email (demo codes are returned only in local demo mode).
+app.post("/api/auth/send-otp", rateLimitLogin, async (req, res) => {
   const { rollNumber, email, phone } = req.body;
 
-  // 1. Validate Roll Number
-  if (!rollNumber || typeof rollNumber !== "string" || rollNumber.trim().length < 2 || rollNumber.length > 30) {
-    return res.status(400).json({ error: "Please enter a valid University/College Roll Number." });
-  }
-  const cleanRoll = rollNumber.trim().toUpperCase();
-
-  // 2. Validate College Email Domain
-  if (!email || typeof email !== "string" || !email.includes("@")) {
-    return res.status(400).json({ error: "Please enter your official college email address." });
-  }
-  const cleanEmail = email.trim().toLowerCase();
-
-  const hasValidDomain = cleanEmail.endsWith(".edu.in") || 
-                         cleanEmail.endsWith(ALLOWED_COLLEGE_EMAIL_DOMAIN) ||
-                         cleanEmail.endsWith("@campus.edu") ||
-                         cleanEmail.endsWith("@college.edu.in");
-
-  if (!hasValidDomain) {
-    return res.status(400).json({ 
-      error: `Please use your official college email address ending with ${ALLOWED_COLLEGE_EMAIL_DOMAIN}. Personal email providers (@gmail.com, etc.) are not permitted.`
-    });
+  const cleanRoll = typeof rollNumber === "string" ? rollNumber.trim().toUpperCase() : "";
+  const cleanEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+  const cleanPhone = typeof phone === "string" ? phone.trim().replace(/\D/g, "") : "";
+  const genericResponse = {
+    success: true,
+    message: "If the details match an eligible student account, a verification code will be sent.",
+    maskedEmail: cleanEmail.includes("@") ? maskEmail(cleanEmail) : "",
+    expiresInSeconds: 300,
+  };
+  if (cleanRoll.length < 2 || cleanRoll.length > 30 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) ||
+      cleanPhone.length !== 10) {
+    return res.status(202).json(genericResponse);
   }
 
-  // 3. Validate Phone Number (10 digits)
-  if (!phone || typeof phone !== "string") {
-    return res.status(400).json({ error: "Please enter your 10-digit mobile number." });
-  }
-  const cleanPhone = phone.trim().replace(/\D/g, "");
-  if (cleanPhone.length !== 10) {
-    return res.status(400).json({ error: "Please enter a valid 10-digit mobile phone number (without country code)." });
-  }
-
-  if (!IS_DEMO_MODE) {
-    return res.status(503).json({ error: "Student email verification is unavailable because no email delivery provider is configured." });
-  }
-
-  const registeredStudents = readStudentsFromCsv();
-  const registeredByRoll = registeredStudents.find((student) => student.roll_number.toUpperCase() === cleanRoll);
-  const registeredByEmail = registeredStudents.find((student) => student.email.toLowerCase() === cleanEmail);
-  if ((registeredByRoll && registeredByRoll.email.toLowerCase() !== cleanEmail) ||
-      (registeredByEmail && registeredByEmail.roll_number.toUpperCase() !== cleanRoll)) {
-    return res.status(403).json({ error: "The roll number and registered college email do not match." });
-  }
-  // 4. Rate Limiting: 20 seconds between resends
-  const existingOtp = activeOtps.get(cleanRoll);
   const now = Date.now();
-  if (existingOtp && now - existingOtp.createdAt < 20000) {
-    return res.status(429).json({ error: "Please wait 20 seconds before requesting another verification code." });
+  const cooldownKey = otpIdentityKey(cleanRoll);
+  const nextAllowedAt = otpCooldowns.get(cooldownKey);
+  if (nextAllowedAt && now < nextAllowedAt) {
+    return res.status(429).json({ error: "Please wait before requesting another verification code." });
   }
+  otpCooldowns.set(cooldownKey, now + 20_000);
 
-  // 5. Secure Cryptographic 6-digit OTP Generation
+  const eligibleStudent = matchingRegisteredStudent(cleanRoll, cleanEmail);
+  if (!eligibleStudent) return res.status(202).json(genericResponse);
+
   const generatedOtp = crypto.randomInt(100000, 1000000).toString();
-  const expiresAt = now + 5 * 60 * 1000; // 5 minutes expiration
+  const expiresAt = now + 5 * 60 * 1000;
+  activeOtps.delete(cleanRoll);
+
+  if (EMAIL_PROVIDER === "resend") {
+    try {
+      await deliverStudentOtp(cleanEmail, generatedOtp);
+    } catch {
+      console.error("Student OTP email delivery failed.");
+      return res.status(503).json({ error: "Unable to send a verification code right now. Please try again later." });
+    }
+  } else if (!IS_DEMO_MODE) {
+    return res.status(503).json({ error: "Student email verification is temporarily unavailable." });
+  }
 
   activeOtps.set(cleanRoll, {
-    otp: generatedOtp,
+    otpDigest: otpDigest(cleanRoll, eligibleStudent.student_id, cleanEmail, generatedOtp),
+    studentId: eligibleStudent.student_id,
     email: cleanEmail,
-    phone: cleanPhone,
     rollNumber: cleanRoll,
     expiresAt,
     attempts: 0,
-    createdAt: now
+    createdAt: now,
   });
 
-  const masked = maskEmail(cleanEmail);
-
-  return res.json({
-    success: true,
-    message: `A 6-digit verification code has been dispatched to ${masked}`,
-    maskedEmail: masked,
-    // Only reveal demo OTP if demo mode is explicitly enabled
-    ...(IS_DEMO_MODE ? { demoOtp: generatedOtp } : {}),
-    expiresInSeconds: 300
+  return res.status(202).json({
+    ...genericResponse,
+    ...(EMAIL_PROVIDER !== "resend" && IS_DEMO_MODE ? { demoOtp: generatedOtp } : {}),
   });
 });
 
@@ -1368,53 +1455,51 @@ app.post("/api/auth/demo-login", (req, res) => {
 app.post("/api/auth/verify-otp", rateLimitLogin, (req, res) => {
   const { rollNumber, otp, email, phone } = req.body;
 
-  if (!rollNumber || !otp || typeof rollNumber !== "string" || typeof otp !== "string") {
-    return res.status(400).json({ error: "Roll Number and 6-digit OTP code are required." });
+  if (typeof rollNumber !== "string" || typeof otp !== "string" || typeof email !== "string") {
+    return res.status(400).json({ error: "Invalid or expired verification code. Request a new code and try again." });
   }
 
   const cleanRoll = rollNumber.trim().toUpperCase();
   const enteredOtp = otp.trim();
+  const cleanEmail = email.trim().toLowerCase();
   const stored = activeOtps.get(cleanRoll);
 
   if (!stored) {
-    return res.status(400).json({ error: "Verification code expired or not found. Please request a new code." });
+    return res.status(400).json({ error: "Invalid or expired verification code. Request a new code and try again." });
   }
 
-  // Check Expiration (5 minutes)
-  if (Date.now() > stored.expiresAt) {
+  if (Date.now() >= stored.expiresAt) {
     activeOtps.delete(cleanRoll);
-    return res.status(400).json({ error: "This OTP code has expired. Please request a new code." });
+    return res.status(400).json({ error: "Invalid or expired verification code. Request a new code and try again." });
   }
 
-  // Check Attempts limit (Max 5 attempts)
   stored.attempts += 1;
-  if (stored.attempts > 5) {
-    activeOtps.delete(cleanRoll);
-    return res.status(429).json({ error: "Too many failed attempts. Please request a new verification code." });
-  }
 
-  // Strict OTP match check
-  if (stored.otp !== enteredOtp) {
-    return res.status(400).json({
-      error: `Invalid OTP code. ${5 - stored.attempts} attempt${5 - stored.attempts === 1 ? '' : 's'} remaining.`
+  const submittedDigest = otpDigest(cleanRoll, stored.studentId, cleanEmail, enteredOtp);
+  const challengeStillBound = cleanEmail === stored.email &&
+    matchingRegisteredStudent(cleanRoll, cleanEmail)?.student_id === stored.studentId;
+  const otpMatches = /^[0-9]{6}$/.test(enteredOtp) &&
+    crypto.timingSafeEqual(Buffer.from(stored.otpDigest, "hex"), Buffer.from(submittedDigest, "hex"));
+  if (!challengeStillBound || !otpMatches) {
+    if (stored.attempts >= 5) activeOtps.delete(cleanRoll);
+    return res.status(stored.attempts >= 5 ? 429 : 400).json({
+      error: stored.attempts >= 5
+        ? "Too many attempts. Request a new verification code."
+        : "Invalid or expired verification code. Request a new code and try again.",
     });
   }
 
-  // OTP Verified Successfully!
   activeOtps.delete(cleanRoll);
 
-  const targetEmail = stored.email || email || `${cleanRoll.toLowerCase()}@college.edu.in`;
-  const targetPhone = stored.phone || phone || "9876543210";
-
   const { student: csvRecord, isNew } = saveStudentToCsv({
-    rollNumber: cleanRoll,
-    email: targetEmail,
-    phone: targetPhone,
+    rollNumber: stored.rollNumber,
+    email: stored.email,
+    phone: matchingRegisteredStudent(stored.rollNumber, stored.email)?.phone || "",
     emailVerified: true
   });
 
-  const academic = studentAcademicDirectory[cleanRoll] || {
-    name: targetEmail.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, l => l.toUpperCase()),
+  const academic = studentAcademicDirectory[stored.rollNumber] || {
+    name: stored.email.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, l => l.toUpperCase()),
     department: "Engineering & Applied Sciences",
     year: "3rd Year"
   };
@@ -1441,7 +1526,7 @@ app.post("/api/auth/verify-otp", rateLimitLogin, (req, res) => {
     email: csvRecord.email,
     name: academic.name,
     role: "student",
-    authSource: "demo",
+    authSource: "otp",
   });
 
   return res.json({

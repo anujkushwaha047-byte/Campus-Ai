@@ -334,7 +334,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
                   Verify University Email
                 </h4>
                 <p className="text-xs text-slate-500 mt-1">
-                  6-digit verification code sent to:
+                  If the details match an eligible student account, a 6-digit code will be sent:
                 </p>
                 <div className="inline-block mt-1 font-mono font-bold text-xs text-[#146EF5] bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100">
                   {maskedEmail || email}
