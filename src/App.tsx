@@ -97,7 +97,7 @@ interface DashboardAppProps {
 
 function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: DashboardAppProps) {
   const navigate = useNavigate();
-  const [userRole, setUserRole] = useState<"admin" | "student">("student");
+  const [userRole] = useState<"admin" | "student">("student");
   const [currentTab, setCurrentTab] = useState("student_dashboard");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -172,18 +172,6 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
     fetchAnalytics();
     fetchNotifications();
   }, [userRole]);
-
-  // Sync tab when switching roles
-  const handleSwitchRole = (role: "admin" | "student") => {
-    setUserRole(role);
-    if (role === "student") {
-      setCurrentTab("student_dashboard");
-      showToast("Switched to Student Portal View", "info");
-    } else {
-      setCurrentTab("dashboard");
-      showToast("Switched to Super Admin Portal View", "info");
-    }
-  };
 
   const handleSelectTab = (tab: string) => {
     if (tab === "submit_complaint") {
@@ -345,7 +333,7 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
     (c) => c.priority === "Critical" && c.status !== "Resolved" && c.status !== "Rejected"
   ).length;
   const pendingCount = complaints.filter(
-    (c) => c.status === "Pending" || c.status === "Under Review"
+    (c) => c.status === "Submitted" || c.status === "Pending" || c.status === "Under Review"
   ).length;
 
   // Title calculation
@@ -433,7 +421,6 @@ function DashboardApp({ studentProfile, onLogout, onUpdateStudentProfile }: Dash
           studentProfile={studentProfile}
           notifications={notifications}
           onToggleMobileMenu={() => setMobileSidebarOpen(!mobileSidebarOpen)}
-          onSwitchRole={handleSwitchRole}
           onNotificationClick={handleNotificationClick}
           onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
           searchQuery={searchQuery}
@@ -692,7 +679,7 @@ export default function App() {
 
         {/* 6. Admin Login Route: NEW admin login page */}
         <Route path="/admin-login" element={<AdminLoginPage onLoginSuccess={handleLoginSuccess} />} />
-        <Route path="/staff-login" element={<StaffLoginPage />} />
+        <Route path="/staff-login" element={<StaffLoginPage onLoginSuccess={handleLoginSuccess} />} />
 
         {/* 7. Admin Dashboard Route: Protected admin portal */}
         <Route path="/admin" element={<Navigate to="/admin-dashboard" replace />} />

@@ -17,7 +17,7 @@ export function getSessionRole(): AppRole {
   return role === "warden" || role === "staff" ? role : "student";
 }
 
-export function getDashboardPath(role = getSessionRole()): string {
+export function getDashboardPath(role: string = getSessionRole()): string {
   if (role === "admin" || role === "main_admin" || role === "super_admin") return "/admin-dashboard";
   if (role === "warden") return "/warden-dashboard";
   if (role === "staff") return "/department-dashboard";
@@ -59,6 +59,7 @@ export function getStoredAuth(): AuthSession | null {
  */
 export function saveStoredAuth(token: string, student: StudentProfile): void {
   try {
+    clearStoredAuth();
     const session: AuthSession = {
       token,
       student,
@@ -81,6 +82,7 @@ export function clearStoredAuth(): void {
     localStorage.removeItem("student");
     localStorage.removeItem("studentProfile");
     localStorage.removeItem("auth_token");
+    localStorage.removeItem("admin_token");
     localStorage.removeItem("isUserAuth");
   } catch (err) {
     console.error("Failed to clear auth session:", err);

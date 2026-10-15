@@ -1,7 +1,7 @@
 import { getStoredAuth } from "./utils/auth";
 
 export async function apiGet<T>(endpoint: string): Promise<T> {
-  const token = localStorage.getItem("token") || localStorage.getItem("admin_token") || getStoredAuth()?.token;
+  const token = getStoredAuth()?.token || localStorage.getItem("token") || localStorage.getItem("admin_token");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
@@ -17,7 +17,7 @@ export async function apiGet<T>(endpoint: string): Promise<T> {
 }
 
 export async function apiPut<T>(endpoint: string, data: any): Promise<T> {
-  const token = localStorage.getItem("token") || localStorage.getItem("admin_token") || getStoredAuth()?.token;
+  const token = getStoredAuth()?.token || localStorage.getItem("token") || localStorage.getItem("admin_token");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
@@ -37,7 +37,7 @@ export async function apiPut<T>(endpoint: string, data: any): Promise<T> {
 }
 
 export async function apiPost<T>(endpoint: string, data: any): Promise<T> {
-  const token = localStorage.getItem("token") || localStorage.getItem("admin_token") || getStoredAuth()?.token;
+  const token = getStoredAuth()?.token || localStorage.getItem("token") || localStorage.getItem("admin_token");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };

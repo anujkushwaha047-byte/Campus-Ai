@@ -62,7 +62,7 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
   ];
 
   const priorities: Priority[] = ["Urgent", "Critical", "High", "Medium", "Low"];
-  const statuses: ComplaintStatus[] = ["Pending", "Under Review", "Assigned", "In Progress", "Resolved", "Rejected"];
+  const statuses: ComplaintStatus[] = ["Submitted", "Pending", "Under Review", "Assigned", "In Progress", "Resolved", "Rejected"];
 
   const filteredComplaints = useMemo(() => {
     return complaints.filter((c) => {
@@ -76,7 +76,9 @@ export const ComplaintsListView: React.FC<ComplaintsListViewProps> = ({
 
       const matchesCategory = categoryFilter === "all" || c.category === categoryFilter;
       const matchesPriority = priorityFilter === "all" || c.priority === priorityFilter;
-      const matchesStatus = statusFilter === "all" || c.status === statusFilter;
+      const matchesStatus = statusFilter === "all" ||
+        c.status === statusFilter ||
+        (initialFilter?.status === "Pending" && statusFilter === "Pending" && c.status === "Submitted");
       const matchesDepartment = departmentFilter === "all" || c.department === departmentFilter;
 
       return matchesSearch && matchesCategory && matchesPriority && matchesStatus && matchesDepartment;

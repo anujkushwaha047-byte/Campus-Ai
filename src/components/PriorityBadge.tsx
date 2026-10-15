@@ -75,6 +75,12 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   size = "sm",
 }) => {
   const styles: Record<ComplaintStatus, { bg: string; text: string; border: string; dot: string }> = {
+    Submitted: {
+      bg: "bg-sky-50 text-sky-800",
+      text: "text-sky-800",
+      border: "border-sky-200",
+      dot: "bg-sky-500",
+    },
     Pending: {
       bg: "bg-amber-50 text-amber-800",
       text: "text-amber-800",

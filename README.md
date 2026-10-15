@@ -49,7 +49,7 @@
 - **Frontend**: React 19, TypeScript, Tailwind CSS, Vite, Lucide Icons, Recharts, Motion
 - **Backend**: Node.js, Express, TypeScript, tsx
 - **AI Engine**: Google Gemini API (`@google/genai`)
-- **Data Persistence**: CSV storage engine (`data/students.csv`) + In-memory store
+- **Data Persistence**: Student CSV plus JSON complaint and notification stores under `data/` (or `DATA_DIR`)
 - **Deployment**: Render Web Service ..
 
 ---
@@ -77,6 +77,10 @@
    Create a `.env` file in the root directory:
    ```env
    GEMINI_API_KEY="your_google_gemini_api_key"
+   AUTH_SECRET="a-long-random-secret"
+   ADMIN_PASSWORD="your-local-admin-password"
+   STAFF_PASSWORD="your-local-staff-password"
+   DEMO_MODE="true"
    ALLOWED_COLLEGE_EMAIL_DOMAIN=".edu.in"
    ```
 
@@ -92,9 +96,15 @@
    npm run start
    ```
 
+### Production configuration and persistence
+
+- Render requires `AUTH_SECRET`, `ADMIN_PASSWORD`, and `STAFF_PASSWORD`; set them as private environment variables. Demo login is disabled in production.
+- Authentication tokens remain valid across server restarts only when the same `AUTH_SECRET` is retained.
+- This repository does not currently include PostgreSQL or read `DATABASE_URL`. Student records are stored in `students.csv`; complaints (including comments and timeline) and notifications are stored in JSON files.
+- The default `data/` directory must be on persistent storage in production. On Render, attach a persistent disk and set `DATA_DIR` to its mount path. Render's ephemeral filesystem can lose application data across restarts/deploys.
+
 ---
 
 ## 📜 License
 
 This project is licensed under the MIT License. Developed for University Student Grievance Redressal Committees (SGRC).
-

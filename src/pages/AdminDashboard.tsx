@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Filter, Search, LogOut, AlertTriangle, CheckCircle, Clock, FileText } from 'lucide-react';
-import { apiGet, apiPut } from '../api';
-import { Complaint, ComplaintStatus } from '../types';
+import { Shield, Filter, Search, LogOut, AlertTriangle, CheckCircle, Clock, FileText, Eye } from 'lucide-react';
+import { apiGet, apiPost, apiPut } from '../api';
+import { Complaint, ComplaintStatus, Priority } from '../types';
+import { clearStoredAuth } from '../utils/auth';
+import { ComplaintDetailsModal } from '../components/ComplaintDetailsModal';
 
 const ALL_SECTORS = [
   'All',
@@ -27,6 +29,7 @@ const ALL_SECTORS = [
 const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
   const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
   const [sectorFilter, setSectorFilter] = useState<string>('All');
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [severityFilter, setSeverityFilter] = useState<string>('All');
@@ -64,10 +67,50 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
+  const handleComplaintUpdate = async (updates: Partial<Complaint> & {
+    newComment?: string;
+    author?: string;
+    role?: 'admin' | 'student' | 'officer';
+    overrideNote?: string;
+  }) => {
+    if (!selectedComplaint) return;
+    try {
+      const data = await apiPut<{ success: boolean; complaint: Complaint }>(`/api/complaints/${selectedComplaint.id}`, updates);
+      setSelectedComplaint(data.complaint);
+      setComplaints((items) => items.map((item) => item.id === data.complaint.id ? data.complaint : item));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update complaint');
+    }
+  };
+
+  const handleAssignComplaint = async (
+    complaintId: string,
+    department: string,
+    assigneeId: string,
+    assigneeName: string,
+    assigneeRole: string,
+    priority: Priority,
+  ) => {
+    setError(null);
+    try {
+      const data = await apiPost<{ success: boolean; complaint: Complaint }>(`/api/complaints/${complaintId}/assign`, {
+        department,
+        assignedTo: assigneeName,
+        assignedToId: assigneeId,
+        assignedOfficerRole: assigneeRole,
+        priority,
+      });
+      setSelectedComplaint(data.complaint);
+      setComplaints((items) => items.map((item) => item.id === data.complaint.id ? data.complaint : item));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to assign complaint');
+      throw err;
+    }
+  };
+
   const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    navigate('/admin-login');
+    clearStoredAuth();
+    navigate('/login', { replace: true });
   };
 
   // Filter complaints
@@ -86,15 +129,15 @@ const AdminDashboard: React.FC = () => {
 
   const stats = {
     total: complaints.length,
-    pending: complaints.filter(c => c.status === 'Pending').length,
+    pending: complaints.filter(c => c.status === 'Submitted' || c.status === 'Pending').length,
     inProgress: complaints.filter(c => c.status === 'In Progress').length,
     resolved: complaints.filter(c => c.status === 'Resolved').length,
     critical: complaints.filter(c => c.priority === 'Critical').length,
     high: complaints.filter(c => c.priority === 'High').length,
-    unassigned: complaints.filter(c => !c.assignedAdminId).length,
+    unassigned: complaints.filter(c => !c.assignedToId && !c.assignedAdminId).length,
   };
 
-  const statuses = ['All', 'Pending', 'In Progress', 'Resolved'];
+  const statuses = ['All', 'Submitted', 'Pending', 'In Progress', 'Resolved'];
   const severities = ['All', 'Critical', 'High', 'Medium', 'Low'];
 
   return (
@@ -225,13 +268,14 @@ const AdminDashboard: React.FC = () => {
                   <th className="px-4 py-3">Priority</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Created</th>
+                  <th className="px-4 py-3">Details</th>
                   <th className="px-4 py-3">Update Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
                 {filteredComplaints.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-slate-400">
+                    <td colSpan={9} className="p-8 text-center text-slate-400">
                       No complaints found matching current filters.
                     </td>
                   </tr>
@@ -272,11 +316,20 @@ const AdminDashboard: React.FC = () => {
                         {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : 'N/A'}
                       </td>
                       <td className="px-4 py-3">
+                        <button
+                          onClick={() => setSelectedComplaint(c)}
+                          className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500"
+                        >
+                          <Eye className="h-3.5 w-3.5" /> View / Assign
+                        </button>
+                      </td>
+                      <td className="px-4 py-3">
                         <select 
                           value={c.status} 
                           onChange={(e) => handleStatusChange(c.id, e.target.value as ComplaintStatus)}
                           className="bg-slate-900 border border-slate-700 text-xs text-slate-200 rounded px-2 py-1 focus:outline-none focus:border-blue-500 cursor-pointer"
                         >
+                          <option value="Submitted">Submitted</option>
                           <option value="Pending">Pending</option>
                           <option value="In Progress">In Progress</option>
                           <option value="Resolved">Resolved</option>
@@ -291,6 +344,14 @@ const AdminDashboard: React.FC = () => {
           </div>
         )}
       </section>
+      <ComplaintDetailsModal
+        complaint={selectedComplaint}
+        isOpen={Boolean(selectedComplaint)}
+        onClose={() => setSelectedComplaint(null)}
+        userRole="admin"
+        onUpdateComplaint={handleComplaintUpdate}
+        onAssignComplaint={handleAssignComplaint}
+      />
     </div>
   );
 };

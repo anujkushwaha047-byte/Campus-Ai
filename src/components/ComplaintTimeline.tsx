@@ -69,7 +69,7 @@ export const ComplaintTimeline: React.FC<ComplaintTimelineProps> = ({
         {[
           { label: "Submitted", active: true },
           { label: "AI Analysis", active: true },
-          { label: "Review", active: currentStatus !== "Pending" },
+          { label: "Review", active: currentStatus !== "Submitted" && currentStatus !== "Pending" },
           { label: "In Progress", active: currentStatus === "In Progress" || currentStatus === "Resolved" },
           { label: currentStatus === "Rejected" ? "Rejected" : "Resolved", active: currentStatus === "Resolved" || currentStatus === "Rejected" },
         ].map((step, idx) => (

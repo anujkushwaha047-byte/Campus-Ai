@@ -21,6 +21,7 @@ import { PriorityBadge, StatusBadge } from "./PriorityBadge";
 import { AIAnalysisCard } from "./AIAnalysisCard";
 import { ComplaintTimeline } from "./ComplaintTimeline";
 import { DEPARTMENTS, getDepartmentDefinition } from "../departmentConfig";
+import { getAuthHeaders } from "../utils/auth";
 
 interface ComplaintDetailsModalProps {
   complaint: Complaint | null;
@@ -48,6 +49,8 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
   const [assignedOfficer, setAssignedOfficer] = useState(complaint?.assignedTo || "");
   const [selectedDepartment, setSelectedDepartment] = useState(complaint?.department || "");
   const [overrideNote, setOverrideNote] = useState("");
+  const [assignmentError, setAssignmentError] = useState("");
+  const [isAssigning, setIsAssigning] = useState(false);
   const [isSuggestingAi, setIsSuggestingAi] = useState(false);
   const [aiDraft, setAiDraft] = useState<{ resolutionSummary: string; internalNotes: string; preventativeAction: string } | null>(null);
 
@@ -85,14 +88,23 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
     if (!selectedDepartment || !assignee) return;
 
     if (onAssignComplaint) {
-      await onAssignComplaint(
-        complaint.id,
-        selectedDepartment,
-        assignee.id,
-        assignee.name,
-        assignee.role,
-        selectedPriority,
-      );
+      setIsAssigning(true);
+      setAssignmentError("");
+      try {
+        await onAssignComplaint(
+          complaint.id,
+          selectedDepartment,
+          assignee.id,
+          assignee.name,
+          assignee.role,
+          selectedPriority,
+        );
+        return;
+      } catch (error) {
+        setAssignmentError(error instanceof Error ? error.message : "Failed to assign complaint.");
+      } finally {
+        setIsAssigning(false);
+      }
       return;
     }
 
@@ -124,7 +136,7 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
     try {
       const res = await fetch("/api/ai/suggest-resolution", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(userRole),
         body: JSON.stringify({ complaintId: complaint.id }),
       });
       const data = await res.json();
@@ -466,7 +478,7 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
                     Update Complaint Status
                   </h4>
                   <div className="grid grid-cols-2 gap-2 mb-4">
-                    {(["Pending", "Under Review", "Assigned", "In Progress", "Resolved", "Rejected"] as ComplaintStatus[]).map((st) => (
+                    {(["Submitted", "Pending", "Under Review", "Assigned", "In Progress", "Resolved", "Rejected"] as ComplaintStatus[]).map((st) => (
                       <button
                         key={st}
                         onClick={() => handleStatusChange(st)}
@@ -568,11 +580,12 @@ export const ComplaintDetailsModal: React.FC<ComplaintDetailsModalProps> = ({
                   </select>
                   <button
                     onClick={handleAssignComplaint}
-                    disabled={!selectedDepartment || !assignedOfficer || complaint.status === "Resolved"}
+                    disabled={!selectedDepartment || !assignedOfficer || complaint.status === "Resolved" || isAssigning}
                     className="sm:col-span-3 px-5 py-2 bg-[#146EF5] text-white font-bold text-xs rounded-xl hover:bg-blue-600 disabled:opacity-50 cursor-pointer"
                   >
-                    Assign Complaint
+                    {isAssigning ? "Assigning..." : "Assign Complaint"}
                   </button>
+                  {assignmentError && <p role="alert" className="sm:col-span-3 text-xs text-rose-600">{assignmentError}</p>}
                   {/* Keep the legacy free-form action available only for old records without a catalog match. */}
                   {!onAssignComplaint && (
                     <button

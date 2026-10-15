@@ -10,8 +10,15 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-const AUTH_SECRET = process.env.AUTH_SECRET || "campuscare_auth_secret_jwt_key_2026";
-const IS_DEMO_MODE = process.env.DEMO_MODE !== "false";
+const AUTH_SECRET = process.env.AUTH_SECRET || (process.env.NODE_ENV === "production" ? "" : crypto.randomBytes(32).toString("hex"));
+const IS_DEMO_MODE = process.env.NODE_ENV !== "production" && process.env.DEMO_MODE !== "false";
+
+if (process.env.NODE_ENV === "production") {
+  const missingAuthConfig = ["AUTH_SECRET", "ADMIN_PASSWORD", "STAFF_PASSWORD"].filter((key) => !process.env[key]);
+  if (missingAuthConfig.length > 0) {
+    throw new Error(`Missing required production environment variables: ${missingAuthConfig.join(", ")}`);
+  }
+}
 
 type UserRole = "student" | "warden" | "staff" | "admin" | "sector_admin" | "main_admin";
 interface AuthenticatedUser {
@@ -97,9 +104,10 @@ app.use((req, res, next) => {
 // ==========================================
 // 2. DATA STORAGE ENGINE (data/)
 // ==========================================
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const STUDENTS_CSV_PATH = path.join(DATA_DIR, "students.csv");
 const COMPLAINTS_JSON_PATH = path.join(DATA_DIR, "complaints.json");
+const NOTIFICATIONS_JSON_PATH = path.join(DATA_DIR, "notifications.json");
 
 const ALLOWED_COLLEGE_EMAIL_DOMAIN = (process.env.ALLOWED_COLLEGE_EMAIL_DOMAIN || ".edu.in").toLowerCase();
 
@@ -336,9 +344,8 @@ function verifyAuthToken(token: string): UserPayload | null {
     }
 
     const payload: UserPayload = JSON.parse(Buffer.from(dataB64, "base64url").toString("utf8"));
-    if (payload.exp && Date.now() > payload.exp) {
-      return null; // Expired token
-    }
+    const validRoles: UserRole[] = ["student", "warden", "staff", "admin", "sector_admin", "main_admin"];
+    if (!payload.exp || Date.now() > payload.exp || !validRoles.includes(payload.role) || !payload.email) return null;
 
     return payload;
   } catch (err) {
@@ -566,7 +573,7 @@ interface DBComplaint {
   aiConfidence?: number | null;
   riskFlags?: string[];
   recommendedAction?: string;
-  status: "Pending" | "Under Review" | "Assigned" | "In Progress" | "Resolved" | "Rejected";
+  status: "Submitted" | "Pending" | "Under Review" | "Assigned" | "In Progress" | "Resolved" | "Rejected";
   department: string;
   sector?: string;
   assignedTo?: string;
@@ -618,6 +625,34 @@ function addNotification(notification: Omit<DBNotification, "id" | "timestamp" |
     timestamp: new Date().toISOString(),
     read: false
   });
+  saveNotifications();
+}
+
+function isAdminRole(role: UserRole): boolean {
+  return role === "main_admin" || role === "sector_admin" || role === "admin";
+}
+
+function isComplaintOwner(user: AuthenticatedUser, complaint: DBComplaint): boolean {
+  return Boolean(
+    (user.rollNumber && complaint.studentRoll.toUpperCase() === user.rollNumber.toUpperCase()) ||
+    (user.studentId && complaint.studentId === user.studentId)
+  );
+}
+
+function canManageDepartmentComplaint(user: AuthenticatedUser, complaint: DBComplaint): boolean {
+  const userId = user.id || user.studentId;
+  return Boolean(
+    (userId && complaint.assignedToId === userId) ||
+    (user.department && complaint.department === user.department) ||
+    (user.role === "sector_admin" && user.sector === complaint.sector)
+  );
+}
+
+function canAccessComplaint(user: AuthenticatedUser, complaint: DBComplaint): boolean {
+  if (user.role === "main_admin" || user.role === "admin") return true;
+  if (user.role === "sector_admin") return complaint.sector === user.sector;
+  if (user.role === "warden" || user.role === "staff") return canManageDepartmentComplaint(user, complaint);
+  return isComplaintOwner(user, complaint);
 }
 
 // Default Seed Complaints
@@ -768,18 +803,15 @@ const seedComplaints: DBComplaint[] = [
 let complaints: DBComplaint[] = [];
 
 function loadComplaints(): DBComplaint[] {
+  if (!fs.existsSync(COMPLAINTS_JSON_PATH)) return [...seedComplaints];
   try {
-    if (fs.existsSync(COMPLAINTS_JSON_PATH)) {
-      const data = fs.readFileSync(COMPLAINTS_JSON_PATH, "utf8");
-      const parsed = JSON.parse(data);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-    }
+    const parsed = JSON.parse(fs.readFileSync(COMPLAINTS_JSON_PATH, "utf8"));
+    if (!Array.isArray(parsed)) throw new Error("complaints.json must contain an array.");
+    return parsed;
   } catch (err) {
     console.error("Error reading complaints.json:", err);
+    throw err;
   }
-  return [...seedComplaints];
 }
 
 function saveComplaints() {
@@ -788,12 +820,13 @@ function saveComplaints() {
     fs.writeFileSync(COMPLAINTS_JSON_PATH, JSON.stringify(complaints, null, 2), "utf8");
   } catch (err) {
     console.error("Error persisting complaints.json:", err);
+    throw err;
   }
 }
 
 complaints = loadComplaints();
 
-let notifications: DBNotification[] = [
+const seedNotifications: DBNotification[] = [
   {
     id: "notif-1",
     recipientType: "admin",
@@ -806,9 +839,48 @@ let notifications: DBNotification[] = [
   }
 ];
 
+function loadNotifications(): DBNotification[] {
+  if (!fs.existsSync(NOTIFICATIONS_JSON_PATH)) return [...seedNotifications];
+  try {
+    const data = JSON.parse(fs.readFileSync(NOTIFICATIONS_JSON_PATH, "utf8"));
+    if (!Array.isArray(data)) throw new Error("notifications.json must contain an array.");
+    return data;
+  } catch (err) {
+    console.error("Error reading notifications.json:", err);
+    throw err;
+  }
+}
+
+function saveNotifications() {
+  try {
+    initStorage();
+    fs.writeFileSync(NOTIFICATIONS_JSON_PATH, JSON.stringify(notifications, null, 2), "utf8");
+  } catch (err) {
+    console.error("Error persisting notifications.json:", err);
+    throw err;
+  }
+}
+
+let notifications: DBNotification[] = loadNotifications();
+
 // ==========================================
 // 6. AUTHENTICATION ROUTES
 // ==========================================
+
+app.get("/api/auth/session", requireAuth, (req, res) => {
+  const user = req.user!;
+  res.json({
+    user: {
+      id: user.studentId || user.id,
+      name: user.name,
+      email: user.email,
+      rollNumber: user.rollNumber,
+      role: user.role,
+      department: user.department,
+      sector: user.sector,
+    }
+  });
+});
 
 // Send OTP
 app.post("/api/auth/send-otp", (req, res) => {
@@ -897,6 +969,9 @@ app.post("/api/auth/demo-login", (req, res) => {
     mess_staff: { id: "demo-mess-staff", name: "Demo Mess Staff", role: "staff", department: "Mess / Food", email: "demo.mess@campus.local" },
     housekeeping_staff: { id: "demo-housekeeping-staff", name: "Demo Housekeeping Staff", role: "staff", department: "Housekeeping", email: "demo.housekeeping@campus.local" },
     security_staff: { id: "demo-security-staff", name: "Demo Security Staff", role: "staff", department: "Security", email: "demo.security@campus.local" },
+    academic_staff: { id: "academic-coordinator", name: "Demo Academic Staff", role: "staff", department: "Academic / Classroom", email: "demo.academic@campus.local" },
+    administration_staff: { id: "admin-desk", name: "Demo Administration Staff", role: "staff", department: "Administration", email: "demo.administration@campus.local" },
+    other_staff: { id: "central-support", name: "Demo Central Support Staff", role: "staff", department: "Other", email: "demo.support@campus.local" },
   };
   const demoAccount = demoAccounts[String(account)];
   if (demoAccount) {
@@ -1201,11 +1276,11 @@ app.post("/api/admin/login", handleAdminLogin);
 // 7. COMPLAINTS APIs (PROTECTED)
 // ==========================================
 
-// GET /api/complaints - Privacy Enforced: Students only see their own complaints, Sector Admins see only their sector
-app.get("/api/complaints", optionalAuth, (req, res) => {
+// GET /api/complaints - every caller must authenticate before complaint data is returned.
+app.get("/api/complaints", requireAuth, (req, res) => {
   const { rollNumber, status, priority, category, sector, search } = req.query;
-  const user = req.user;
-  const userRole = user?.role || "student";
+  const user = req.user!;
+  const userRole = user.role;
 
   let results = [...complaints];
 
@@ -1221,16 +1296,18 @@ app.get("/api/complaints", optionalAuth, (req, res) => {
     if (assignedSector) {
       results = results.filter(c => c.sector === assignedSector);
     }
-  } else if (user) {
-    // Student ONLY sees their own complaints
-    results = results.filter(
-      c => (user.rollNumber && c.studentRoll.toUpperCase() === user.rollNumber.toUpperCase()) || 
-           (user.studentId && c.studentId === user.studentId)
-    );
-  } else if (rollNumber) {
-    results = results.filter(c => c.studentRoll.toUpperCase() === (rollNumber as string).toUpperCase());
+  } else if (userRole === "warden" || userRole === "staff") {
+    results = results.filter((complaint) => canManageDepartmentComplaint(user, complaint));
   } else {
-    results = [];
+    // Students only see complaints belonging to their authenticated identity.
+    results = results.filter(
+      c => isComplaintOwner(user, c)
+    );
+  }
+
+  // A roll-number filter may narrow a result set, but can never grant access.
+  if (rollNumber && typeof rollNumber === "string") {
+    results = results.filter(c => c.studentRoll.toUpperCase() === rollNumber.toUpperCase());
   }
 
   // Filters
@@ -1263,36 +1340,18 @@ app.get("/api/complaints", optionalAuth, (req, res) => {
 app.get("/api/complaints/:id", requireAuth, (req, res) => {
   if (req.params.id === "assigned") {
     const user = req.user!;
-    const isStaff = user.role === "warden" || user.role === "staff" || user.role === "sector_admin" || user.role === "admin" || user.role === "main_admin";
+    const isStaff = user.role === "warden" || user.role === "staff" || isAdminRole(user.role);
     if (!isStaff) return res.status(403).json({ error: "Department access required." });
-    const assigned = complaints.filter((item) =>
-      (user.id && item.assignedToId === user.id) ||
-      (user.department && item.department === user.department) ||
-      (user.sector && item.sector === user.sector)
-    );
+    const assigned = complaints.filter((item) => canAccessComplaint(user, item) && item.assignedTo);
     return res.json({ complaints: assigned });
   }
   const complaint = complaints.find(c => c.id === req.params.id);
   if (!complaint) {
     return res.status(404).json({ error: "Complaint not found" });
   }
-
   const user = req.user!;
-  const userRole = user.role;
-
-  if (userRole === "main_admin" || userRole === "admin") {
-    // Full access granted
-  } else if (userRole === "sector_admin") {
-    if (complaint.sector !== user.sector) {
-      return res.status(403).json({ error: "Access denied. You can only view complaints assigned to your sector." });
-    }
-  } else {
-    // Student privacy verification
-    const isOwner = (user.rollNumber && complaint.studentRoll.toUpperCase() === user.rollNumber.toUpperCase()) ||
-                    (user.studentId && complaint.studentId === user.studentId);
-    if (!isOwner) {
-      return res.status(403).json({ error: "Access denied. You can only view your own complaints." });
-    }
+  if (!canAccessComplaint(user, complaint)) {
+    return res.status(403).json({ error: "Access denied. This complaint is outside your authorized scope." });
   }
 
   res.json({ complaint });
@@ -1300,6 +1359,9 @@ app.get("/api/complaints/:id", requireAuth, (req, res) => {
 
 // POST /api/complaints - Creates new complaint, attaches verified student identity & AI sector routing
 app.post("/api/complaints", requireAuth, (req, res) => {
+  if (req.user!.role !== "student") {
+    return res.status(403).json({ error: "Only students can submit complaints." });
+  }
   try {
     const {
       title,
@@ -1359,7 +1421,7 @@ app.post("/api/complaints", requireAuth, (req, res) => {
       aiConfidence: aiConfidence !== undefined ? aiConfidence : null,
       riskFlags: Array.isArray(riskFlags) ? riskFlags.slice(0, 10) : [],
       recommendedAction: recommendedAction ? String(recommendedAction).slice(0, 500) : undefined,
-      status: "Pending",
+      status: "Submitted",
       department: department || `${detectedSector} Department`,
       location: location ? String(location).slice(0, 150) : "Campus Main Grounds",
       attachments: Array.isArray(attachments) ? attachments.slice(0, 5) : [],
@@ -1382,14 +1444,6 @@ app.post("/api/complaints", requireAuth, (req, res) => {
           timestamp: new Date(Date.now() + 1000).toISOString(),
           actor: "CampusCare AI Engine"
         },
-        {
-          id: `tl-${Date.now()}-3`,
-          stage: "assigned",
-          title: `Routed to ${detectedSector} Sector`,
-          description: `AI auto-routed complaint to ${detectedSector} Sector Admin for resolution.`,
-          timestamp: new Date(Date.now() + 2000).toISOString(),
-          actor: "CampusCare AI Router"
-        }
       ],
       comments: [
         {
@@ -1417,6 +1471,7 @@ app.post("/api/complaints", requireAuth, (req, res) => {
       read: false,
       type: "status"
     });
+    saveNotifications();
 
     notifications.unshift({
       id: `notif-${Date.now()}-a`,
@@ -1428,6 +1483,7 @@ app.post("/api/complaints", requireAuth, (req, res) => {
       read: false,
       type: newComplaint.priority === "Critical" ? "critical" : "status"
     });
+    saveNotifications();
 
     res.status(201).json({ success: true, complaint: newComplaint });
   } catch (err) {
@@ -1446,6 +1502,12 @@ app.patch("/api/complaints/:id/resolve", requireAuth, requireAdmin, (req, res) =
   }
 
   const existing = complaints[index];
+  if (req.user!.role === "sector_admin" && existing.sector !== req.user!.sector) {
+    return res.status(403).json({ error: "You can only resolve complaints assigned to your sector." });
+  }
+  if (existing.status === "Resolved") {
+    return res.json({ success: true, complaint: existing, message: `Complaint #${existing.id} is already resolved.` });
+  }
   const { author, resolutionNote } = req.body;
   const now = new Date().toISOString();
   const effectiveAuthor = author || "Super Administrator";
@@ -1484,6 +1546,7 @@ app.patch("/api/complaints/:id/resolve", requireAuth, requireAdmin, (req, res) =
     read: false,
     type: "resolved"
   });
+  saveNotifications();
 
   complaints[index] = existing;
   saveComplaints();
@@ -1507,30 +1570,46 @@ const handleUpdateComplaint = (req: express.Request, res: express.Response) => {
   const existing = complaints[index];
   const { status, priority, department, assignedTo, assignedOfficerRole, assignedAdminId, assignedAdminName, overrideNote, newComment, author } = req.body;
   const now = new Date().toISOString();
-  const user = req.user;
-  const userRole = user?.role || "student";
-  const isAdmin = userRole === "main_admin" || userRole === "sector_admin" || userRole === "admin";
+  const user = req.user!;
+  const userRole = user.role;
+  const isAdmin = isAdminRole(userRole);
+  const canManage = isAdmin
+    ? userRole !== "sector_admin" || user.sector === existing.sector
+    : userRole === "student"
+      ? isComplaintOwner(user, existing)
+      : (userRole === "staff" || userRole === "warden") && canManageDepartmentComplaint(user, existing);
 
-  // Authorization Check
-  if (userRole === "sector_admin") {
-    if (existing.sector !== user?.sector) {
-      return res.status(403).json({ error: "Access denied. You can only manage complaints assigned to your sector." });
-    }
-  } else if (!isAdmin && user) {
-    // Student: verify ownership
-    const isOwner = (user.rollNumber && existing.studentRoll.toUpperCase() === user.rollNumber.toUpperCase()) ||
-                    (user.studentId && existing.studentId === user.studentId);
-    if (!isOwner) {
-      return res.status(403).json({ error: "Access denied." });
-    }
+  if (!canManage) {
+    return res.status(403).json({ error: "Access denied. This complaint is outside your authorized scope." });
   }
 
-  // Admin status update
-  if (status && status !== existing.status && isAdmin) {
-    if (!["Pending", "Under Review", "Assigned", "In Progress", "Resolved", "Rejected"].includes(status)) {
-      return res.status(400).json({ error: "Invalid complaint status." });
+  const adminOnlyFields = ["priority", "department", "assignedTo", "assignedOfficerRole", "assignedAdminId", "assignedAdminName"];
+  if (!isAdmin && adminOnlyFields.some((field) => Object.prototype.hasOwnProperty.call(req.body, field))) {
+    return res.status(403).json({ error: "Only administrators can change complaint assignment or priority." });
+  }
+  if (userRole === "student" && status !== undefined) {
+    return res.status(403).json({ error: "Students cannot change complaint status." });
+  }
+
+  const validStatuses = ["Submitted", "Pending", "Under Review", "Assigned", "In Progress", "Resolved", "Rejected"];
+  if (status !== undefined && !validStatuses.includes(status)) {
+    return res.status(400).json({ error: "Invalid complaint status." });
+  }
+  if (priority !== undefined && !["Urgent", "Critical", "High", "Medium", "Low"].includes(priority)) {
+    return res.status(400).json({ error: "Invalid complaint priority." });
+  }
+
+  if (status && status !== existing.status) {
+    if (!isAdmin) {
+      const validStaffTransition =
+        (existing.status === "Assigned" && status === "In Progress") ||
+        (existing.status === "In Progress" && status === "Resolved");
+      if (!validStaffTransition) {
+        return res.status(409).json({ error: "Complaint status must progress from Assigned to In Progress to Resolved." });
+      }
     }
     const stageMap: Record<string, "submitted" | "ai_analyzed" | "under_review" | "assigned" | "in_progress" | "resolved" | "rejected"> = {
+      "Submitted": "submitted",
       "Pending": "submitted",
       "Under Review": "under_review",
       "Assigned": "assigned",
@@ -1551,24 +1630,18 @@ const handleUpdateComplaint = (req: express.Request, res: express.Response) => {
       actor: author || user?.name || "Administrator"
     });
 
-    notifications.unshift({
-      id: `notif-${Date.now()}`,
+    addNotification({
       recipientType: "student",
       recipientId: existing.studentId,
       complaintId: existing.id,
       title: `Complaint Status Updated: ${status}`,
       message: `Your complaint #${existing.id} is now ${status}.`,
-      timestamp: now,
-      read: false,
       type: status === "Resolved" ? "resolved" : "status"
     });
   }
 
   // Admin Priority Update
   if (priority && priority !== existing.priority && isAdmin) {
-    if (!["Urgent", "Critical", "High", "Medium", "Low"].includes(priority)) {
-      return res.status(400).json({ error: "Invalid complaint priority." });
-    }
     existing.isOverriddenByAdmin = true;
     existing.overrideNote = overrideNote ? String(overrideNote).slice(0, 300) : `Priority updated from ${existing.priority} to ${priority}.`;
     existing.priority = priority;
@@ -1624,7 +1697,7 @@ const handleUpdateComplaint = (req: express.Request, res: express.Response) => {
     existing.comments.push({
       id: `comm-${Date.now()}`,
       author: author || user?.name || "User",
-      role: isAdmin ? "admin" : "student",
+      role: isAdmin ? "admin" : userRole === "student" ? "student" : "officer",
       message: cleanComment,
       timestamp: now
     });
@@ -1669,6 +1742,15 @@ app.post("/api/complaints/:id/assign", requireAuth, requireAdmin, (req, res) => 
   if (priority && !["Urgent", "Critical", "High", "Medium", "Low"].includes(priority)) {
     return res.status(400).json({ error: "Invalid priority." });
   }
+  if (
+    complaint.status === "Assigned" &&
+    complaint.department === department.trim() &&
+    complaint.assignedTo === assignee &&
+    complaint.assignedToId === (assignedToId ? String(assignedToId).slice(0, 100) : undefined) &&
+    (!priority || complaint.priority === priority)
+  ) {
+    return res.json({ success: true, complaint });
+  }
   complaint.department = department.trim();
   if (priority) complaint.priority = priority;
   complaint.assignedTo = assignee;
@@ -1712,14 +1794,10 @@ app.post("/api/complaints/:id/assign", requireAuth, requireAdmin, (req, res) => 
 // Department staff can view only complaints assigned to their identity or department.
 app.get("/api/complaints/assigned", requireAuth, (req, res) => {
   const user = req.user!;
-  const isStaff = user.role === "warden" || user.role === "staff" || user.role === "sector_admin" || user.role === "admin" || user.role === "main_admin";
+  const isStaff = user.role === "warden" || user.role === "staff" || isAdminRole(user.role);
   if (!isStaff) return res.status(403).json({ error: "Department access required." });
 
-  const assigned = complaints.filter((complaint) =>
-    (user.id && complaint.assignedToId === user.id) ||
-    (user.department && complaint.department === user.department) ||
-    (user.sector && complaint.sector === user.sector)
-  );
+  const assigned = complaints.filter((complaint) => canAccessComplaint(user, complaint) && complaint.assignedTo);
   res.json({ complaints: assigned });
 });
 
@@ -1728,18 +1806,26 @@ app.patch("/api/complaints/:id/status", requireAuth, (req, res) => {
   if (!complaint) return res.status(404).json({ error: "Complaint not found" });
 
   const user = req.user!;
-  const isAdmin = user.role === "admin" || user.role === "main_admin" || user.role === "sector_admin";
-  const canManage = isAdmin ||
-    (user.role === "warden" || user.role === "staff") &&
-    ((user.id && complaint.assignedToId === user.id) || (user.department && complaint.department === user.department));
+  const isAdmin = isAdminRole(user.role);
+  const inAdminScope = user.role !== "sector_admin" || complaint.sector === user.sector;
+  const canManage = isAdmin
+    ? inAdminScope
+    : (user.role === "warden" || user.role === "staff") && canManageDepartmentComplaint(user, complaint);
   if (!canManage) return res.status(403).json({ error: "You are not authorized to update this complaint." });
 
   const { status } = req.body;
-  if (!["Assigned", "In Progress", "Resolved"].includes(status)) {
+  if (!["In Progress", "Resolved"].includes(status)) {
     return res.status(400).json({ error: "Invalid complaint status." });
   }
+  if (status === complaint.status) return res.json({ success: true, complaint });
   if (complaint.status === "Resolved") {
     return res.status(409).json({ error: "Resolved complaints cannot be changed." });
+  }
+  if (!isAdmin && !(
+    (complaint.status === "Assigned" && status === "In Progress") ||
+    (complaint.status === "In Progress" && status === "Resolved")
+  )) {
+    return res.status(409).json({ error: "Complaint status must progress from Assigned to In Progress to Resolved." });
   }
 
   const now = new Date().toISOString();
@@ -1821,10 +1907,13 @@ app.get("/api/admin/students", requireAuth, requireAdmin, (req, res) => {
 
 // 6. Analytics Aggregate Endpoint (matching exact numbers in reference UI: 245 total, 28 pending, 197 resolved, 20 critical)
 app.get("/api/analytics", requireAuth, requireAdmin, (req, res) => {
-  const total = complaints.length;
-  const pending = complaints.filter(c => c.status === "Pending" || c.status === "Under Review").length;
-  const resolved = complaints.filter(c => c.status === "Resolved").length;
-  const critical = complaints.filter(c => c.priority === "Critical" && c.status !== "Resolved" && c.status !== "Rejected").length;
+  const visibleComplaints = req.user!.role === "sector_admin"
+    ? complaints.filter((complaint) => complaint.sector === req.user!.sector)
+    : complaints;
+  const total = visibleComplaints.length;
+  const pending = visibleComplaints.filter(c => c.status === "Submitted" || c.status === "Pending" || c.status === "Under Review").length;
+  const resolved = visibleComplaints.filter(c => c.status === "Resolved").length;
+  const critical = visibleComplaints.filter(c => c.priority === "Critical" && c.status !== "Resolved" && c.status !== "Rejected").length;
 
   const resolutionProgress = [
     { date: "1 May", resolved: Math.max(16, Math.round(resolved * 0.2)), target: 20 },
@@ -1836,10 +1925,10 @@ app.get("/api/analytics", requireAuth, requireAdmin, (req, res) => {
     { date: "31 May", resolved: resolved, target: total }
   ];
 
-  const criticalCount = complaints.filter(c => c.priority === "Critical").length;
-  const highCount = complaints.filter(c => c.priority === "High").length;
-  const mediumCount = complaints.filter(c => c.priority === "Medium").length;
-  const lowCount = complaints.filter(c => c.priority === "Low").length;
+  const criticalCount = visibleComplaints.filter(c => c.priority === "Critical").length;
+  const highCount = visibleComplaints.filter(c => c.priority === "High").length;
+  const mediumCount = visibleComplaints.filter(c => c.priority === "Medium").length;
+  const lowCount = visibleComplaints.filter(c => c.priority === "Low").length;
 
   const priorityDistribution = [
     { name: "Critical", value: criticalCount, percentage: total ? Math.round((criticalCount / total) * 100) : 0, color: "#EF4444" },
@@ -1849,7 +1938,7 @@ app.get("/api/analytics", requireAuth, requireAdmin, (req, res) => {
   ];
 
   const categoryCounts: Record<string, number> = {};
-  complaints.forEach(c => {
+  visibleComplaints.forEach(c => {
     const cat = c.category || "General / Other";
     categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
   });
@@ -1869,11 +1958,12 @@ app.get("/api/analytics", requireAuth, requireAdmin, (req, res) => {
   }));
 
   const statusDistribution = [
-    { name: "Pending", value: complaints.filter(c => c.status === "Pending").length, color: "#F97316" },
-    { name: "Under Review", value: complaints.filter(c => c.status === "Under Review").length, color: "#3B82F6" },
-    { name: "In Progress", value: complaints.filter(c => c.status === "In Progress").length, color: "#8B5CF6" },
+    { name: "Submitted", value: visibleComplaints.filter(c => c.status === "Submitted").length, color: "#0EA5E9" },
+    { name: "Pending", value: visibleComplaints.filter(c => c.status === "Pending").length, color: "#F97316" },
+    { name: "Under Review", value: visibleComplaints.filter(c => c.status === "Under Review").length, color: "#3B82F6" },
+    { name: "In Progress", value: visibleComplaints.filter(c => c.status === "In Progress").length, color: "#8B5CF6" },
     { name: "Resolved", value: resolved, color: "#22C55E" },
-    { name: "Rejected", value: complaints.filter(c => c.status === "Rejected").length, color: "#EF4444" }
+    { name: "Rejected", value: visibleComplaints.filter(c => c.status === "Rejected").length, color: "#EF4444" }
   ];
 
   const aiInsights = [
@@ -2327,6 +2417,9 @@ app.post("/api/ai/suggest-resolution", requireAuth, requireAdmin, async (req, re
     if (!complaint) {
       return res.status(404).json({ error: "Complaint not found" });
     }
+    if (req.user!.role === "sector_admin" && complaint.sector !== req.user!.sector) {
+      return res.status(403).json({ error: "You can only request suggestions for complaints in your sector." });
+    }
 
     const ai = getGeminiClient();
     if (ai) {
@@ -2370,13 +2463,16 @@ Respond in JSON format:
 });
 
 // POST /api/ai/generate-insights - Interactive AI Query
-app.post("/api/ai/generate-insights", requireAuth, async (req, res) => {
+app.post("/api/ai/generate-insights", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { query } = req.body;
     const ai = getGeminiClient();
+    const visibleComplaints = req.user!.role === "sector_admin"
+      ? complaints.filter((complaint) => complaint.sector === req.user!.sector)
+      : complaints;
 
     if (ai && query && typeof query === "string") {
-      const summaryPayload = complaints.slice(0, 15).map(c => ({
+      const summaryPayload = visibleComplaints.slice(0, 15).map(c => ({
         id: c.id,
         category: c.category,
         priority: c.priority,
@@ -2436,6 +2532,7 @@ app.patch("/api/notifications/:id/read", requireAuth, (req, res) => {
     return res.status(403).json({ error: "Access denied." });
   }
   notif.read = true;
+  saveNotifications();
   res.json({ success: true });
 });
 
@@ -2443,6 +2540,7 @@ app.post("/api/notifications/mark-all-read", requireAuth, (req, res) => {
   notifications.forEach(n => {
     if (canAccessNotification(n, req.user!)) n.read = true;
   });
+  saveNotifications();
   res.json({ success: true });
 });
 

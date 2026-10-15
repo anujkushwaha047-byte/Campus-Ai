@@ -100,7 +100,6 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({ onLoginSuccess }
 
         // Save authentication token with admin profile
         saveStoredAuth(data.token, adminProfile);
-        localStorage.setItem("token", data.token);
 
         // Show success state before redirect
         setIsSuccess(true);

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Clock, Eye, LogOut, MapPin, ShieldAlert, Wrench, LucideIcon } from "lucide-react";
-import { Complaint, ComplaintStatus, StudentProfile } from "../types";
+import { Complaint, ComplaintStatus, NotificationItem, StudentProfile } from "../types";
 import { getAuthHeaders, clearStoredAuth } from "../utils/auth";
 import { PriorityBadge, StatusBadge } from "../components/PriorityBadge";
 
@@ -11,6 +11,7 @@ interface DepartmentDashboardProps {
 
 export const DepartmentDashboard: React.FC<DepartmentDashboardProps> = ({ profile, onLogout }) => {
   const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [selected, setSelected] = useState<Complaint | null>(null);
   const [error, setError] = useState("");
 
@@ -23,6 +24,13 @@ export const DepartmentDashboard: React.FC<DepartmentDashboardProps> = ({ profil
 
   useEffect(() => {
     load().catch((err) => setError(err.message));
+    fetch("/api/notifications", { headers: getAuthHeaders() })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Unable to load notifications.");
+        setNotifications(data.notifications || []);
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Unable to load notifications."));
   }, []);
 
   const updateStatus = async (complaint: Complaint, status: ComplaintStatus) => {
@@ -39,6 +47,19 @@ export const DepartmentDashboard: React.FC<DepartmentDashboardProps> = ({ profil
     }
     setComplaints((items) => items.map((item) => item.id === data.complaint.id ? data.complaint : item));
     setSelected(data.complaint);
+  };
+
+  const markNotificationRead = async (notification: NotificationItem) => {
+    const res = await fetch(`/api/notifications/${notification.id}/read`, {
+      method: "PATCH",
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || "Unable to update notification.");
+      return;
+    }
+    setNotifications((items) => items.map((item) => item.id === notification.id ? { ...item, read: true } : item));
   };
 
   const counts = useMemo(() => ({
@@ -67,6 +88,21 @@ export const DepartmentDashboard: React.FC<DepartmentDashboardProps> = ({ profil
       </header>
       <main className="max-w-6xl mx-auto space-y-6">
         {error && <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm">{error}</div>}
+        {notifications.length > 0 && <section className="bg-white rounded-2xl border border-slate-200 p-5">
+          <h2 className="font-bold mb-3">Notifications</h2>
+          <div className="space-y-2">
+            {notifications.slice(0, 5).map((notification) => (
+              <button
+                key={notification.id}
+                onClick={() => markNotificationRead(notification).catch((err: unknown) => setError(err instanceof Error ? err.message : "Unable to update notification."))}
+                className={`w-full text-left p-3 rounded-xl border ${notification.read ? "border-slate-100 bg-slate-50" : "border-blue-200 bg-blue-50"}`}
+              >
+                <span className="block text-sm font-semibold">{notification.title}</span>
+                <span className="block text-xs text-slate-600 mt-1">{notification.message}</span>
+              </button>
+            ))}
+          </div>
+        </section>}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {([
             ["Assigned", counts.assigned, Clock],

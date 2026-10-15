@@ -4,7 +4,11 @@ import { ShieldCheck } from "lucide-react";
 import { saveStoredAuth, getDashboardPath } from "../utils/auth";
 import { StudentProfile } from "../types";
 
-export const StaffLoginPage: React.FC = () => {
+interface StaffLoginPageProps {
+  onLoginSuccess?: (profile: StudentProfile) => void;
+}
+
+export const StaffLoginPage: React.FC<StaffLoginPageProps> = ({ onLoginSuccess }) => {
   const navigate = useNavigate();
   const [email, setEmail] = useState("warden@college.edu");
   const [password, setPassword] = useState("warden123");
@@ -23,7 +27,9 @@ export const StaffLoginPage: React.FC = () => {
       });
       const data = await response.json();
       if (!response.ok || !data.staff || !data.token) throw new Error(data.error || "Staff login failed.");
-      saveStoredAuth(data.token, data.staff as StudentProfile);
+      const profile = data.staff as StudentProfile;
+      saveStoredAuth(data.token, profile);
+      onLoginSuccess?.(profile);
       navigate(getDashboardPath(data.staff.role), { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Staff login failed.");

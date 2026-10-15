@@ -22,7 +22,7 @@ interface HeaderProps {
   studentProfile: StudentProfile | null;
   notifications: NotificationItem[];
   onToggleMobileMenu: () => void;
-  onSwitchRole: (role: "admin" | "student") => void;
+  onSwitchRole?: (role: "admin" | "student") => void;
   onNotificationClick: (notif: NotificationItem) => void;
   onMarkAllNotificationsRead: () => void;
   searchQuery: string;
@@ -116,7 +116,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Portal Switcher Button */}
-        <button
+        {onSwitchRole && <button
           id="btn-switch-portal"
           onClick={() => onSwitchRole(userRole === "admin" ? "student" : "admin")}
           className="inline-flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 transition-all cursor-pointer shadow-2xs"
@@ -135,7 +135,7 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="sm:hidden text-[11px]">Admin</span>
             </>
           )}
-        </button>
+        </button>}
 
         {/* Notification Bell Dropdown */}
         <div className="relative">
@@ -279,7 +279,7 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
 
               <div className="py-1">
-                <button
+                {onSwitchRole && <button
                   onClick={() => {
                     onSwitchRole(userRole === "admin" ? "student" : "admin");
                     setShowProfileMenu(false);
@@ -288,7 +288,7 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Shield className="w-3.5 h-3.5 text-[#146EF5]" />
                   Switch to {userRole === "admin" ? "Student Portal" : "Admin Portal"}
-                </button>
+                  </button>}
               </div>
             </div>
           )}

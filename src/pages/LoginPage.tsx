@@ -63,6 +63,9 @@ const DEMO_ACCOUNTS = [
   { id: "mess_staff", label: "Demo Mess Staff", role: "STAFF", department: "Mess / Food" },
   { id: "housekeeping_staff", label: "Demo Housekeeping Staff", role: "STAFF", department: "Housekeeping" },
   { id: "security_staff", label: "Demo Security Staff", role: "STAFF", department: "Security" },
+  { id: "academic_staff", label: "Demo Academic Staff", role: "STAFF", department: "Academic / Classroom" },
+  { id: "administration_staff", label: "Demo Administration Staff", role: "STAFF", department: "Administration" },
+  { id: "other_staff", label: "Demo Central Support Staff", role: "STAFF", department: "Other" },
 ];
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {

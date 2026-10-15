@@ -44,7 +44,7 @@ export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({
       (studentProfile?.id && c.studentId === studentProfile.id)
   );
 
-  const pendingCount = myComplaints.filter((c) => c.status === "Pending").length;
+  const pendingCount = myComplaints.filter((c) => c.status === "Submitted" || c.status === "Pending").length;
   const inProgressCount = myComplaints.filter((c) => c.status === "In Progress" || c.status === "Under Review").length;
   const resolvedCount = myComplaints.filter((c) => c.status === "Resolved").length;
 

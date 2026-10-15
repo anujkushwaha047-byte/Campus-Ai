@@ -47,6 +47,7 @@ export type Sector =
 export type Priority = 'Urgent' | 'Critical' | 'High' | 'Medium' | 'Low';
 
 export type ComplaintStatus = 
+  | 'Submitted'
   | 'Pending'
   | 'Under Review'
   | 'Assigned'
