@@ -964,7 +964,7 @@ test("production startup rejects missing or insecure configuration without print
   const insecureConfigurations = [
     { AUTH_SECRET: "a".repeat(64) },
     { APP_URL: "http://campus.example.test" },
-    { DATA_DIR: "relative-data" },
+    { ALLOW_EPHEMERAL_DATA: "false", DATA_DIR: "relative-data" },
     { ALLOW_EPHEMERAL_DATA: "invalid" },
     {
       ALLOW_EPHEMERAL_DATA: "true",
