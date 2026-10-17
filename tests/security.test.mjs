@@ -57,6 +57,7 @@ function productionEnvironment(dataDir) {
     DEMO_MODE: "false",
     PORT: "3000",
     DATA_DIR: dataDir,
+    ALLOW_EPHEMERAL_DATA: "true",
     APP_URL: "https://campus.example.test",
     CORS_ALLOWED_ORIGINS: "",
     AUTH_SECRET: "isolated-test-secret-with-at-least-32-bytes",
@@ -151,6 +152,7 @@ async function startApp(dataDir, production = false, overrides = {}) {
     ...process.env,
     PORT: String(port),
     DATA_DIR: dataDir,
+    ALLOW_EPHEMERAL_DATA: production ? "true" : "false",
     NODE_ENV: production ? "production" : "development",
     DEMO_MODE: production ? "false" : "true",
     AUTH_SECRET: authSecret,
@@ -963,6 +965,11 @@ test("production startup rejects missing or insecure configuration without print
     { AUTH_SECRET: "a".repeat(64) },
     { APP_URL: "http://campus.example.test" },
     { DATA_DIR: "relative-data" },
+    { ALLOW_EPHEMERAL_DATA: "invalid" },
+    {
+      ALLOW_EPHEMERAL_DATA: "true",
+      DATA_DIR: path.resolve(process.cwd(), "data"),
+    },
     { DEMO_MODE: "true" },
     { EMAIL_PROVIDER: "sendgrid" },
     { ALLOWED_COLLEGE_EMAIL_DOMAIN: ".edu.in" },
@@ -997,6 +1004,28 @@ test("a fresh production data directory contains no demo student accounts", asyn
   assert.equal(send.response.status, 202);
   assert.equal(send.data.demoOtp, undefined);
   assert.equal(existsSync(app.otpCapturePath), false);
+});
+
+test("ephemeral production storage warns and expires sessions when the process restarts", async (t) => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), `campus-ai-ephemeral-production-${randomUUID()}-`));
+  let app = await startApp(dataDir, true);
+  t.after(async () => {
+    if (app) await stopApp(app.child);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  assert.match(app.output(), /Ephemeral DATA_DIR enabled/);
+  const login = await request(app.baseUrl, "/api/auth/admin-login", {
+    method: "POST",
+    body: { email: "admin@college.edu", password: "test-legacy-admin-password" },
+  });
+  assert.equal(login.response.status, 200);
+
+  await stopApp(app.child);
+  app = await startApp(dataDir, true);
+  assert.equal((await request(app.baseUrl, "/api/auth/session", {
+    token: login.data.token,
+  })).response.status, 401);
 });
 
 test("untargeted and other-user notifications are not exposed through the notification API", async (t) => {

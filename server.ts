@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import { tmpdir } from "node:os";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
@@ -16,7 +17,15 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
 }
 const isProduction = process.env.NODE_ENV === "production";
 app.set("trust proxy", isProduction ? 1 : false);
-const AUTH_SECRET = process.env.AUTH_SECRET || (process.env.NODE_ENV === "production" ? "" : crypto.randomBytes(32).toString("hex"));
+const configuredAuthSecret = process.env.AUTH_SECRET || (isProduction ? "" : crypto.randomBytes(32).toString("hex"));
+const configuredEphemeralData = process.env.ALLOW_EPHEMERAL_DATA?.trim().toLowerCase();
+if (configuredEphemeralData && !["true", "false"].includes(configuredEphemeralData)) {
+  throw new Error("ALLOW_EPHEMERAL_DATA must be set to true or false.");
+}
+const ALLOW_EPHEMERAL_DATA = configuredEphemeralData === "true";
+const AUTH_SECRET = isProduction && ALLOW_EPHEMERAL_DATA
+  ? crypto.randomBytes(48).toString("base64url")
+  : configuredAuthSecret;
 const configuredDemoMode = process.env.DEMO_MODE?.trim().toLowerCase();
 const IS_DEMO_MODE = !isProduction && configuredDemoMode !== "false";
 const DATA_DIR = process.env.DATA_DIR?.trim()
@@ -85,10 +94,10 @@ if (SUPER_ADMIN_EMAIL && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(SUPER_ADMIN_EMAIL)) 
   throw new Error("SUPER_ADMIN_EMAIL must be a valid email address.");
 }
 if (isProduction && (
-  Buffer.byteLength(AUTH_SECRET, "utf8") < 32 ||
-  AUTH_SECRET !== AUTH_SECRET.trim() ||
-  new Set(AUTH_SECRET).size < 16 ||
-  /^(your|change.?me|replace|example|test|placeholder|dummy)[-_ ]/i.test(AUTH_SECRET)
+  Buffer.byteLength(configuredAuthSecret, "utf8") < 32 ||
+  configuredAuthSecret !== configuredAuthSecret.trim() ||
+  new Set(configuredAuthSecret).size < 16 ||
+  /^(your|change.?me|replace|example|test|placeholder|dummy)[-_ ]/i.test(configuredAuthSecret)
 )) {
   throw new Error("AUTH_SECRET must be a non-placeholder, high-entropy value of at least 32 bytes in production.");
 }
@@ -104,7 +113,14 @@ if (isProduction && configuredDemoMode !== "false") {
 if (isProduction && ALLOWED_COLLEGE_EMAIL_DOMAIN !== "@its.edu.in") {
   throw new Error("ALLOWED_COLLEGE_EMAIL_DOMAIN must be set to @its.edu.in in production.");
 }
-if (isProduction && !path.isAbsolute(process.env.DATA_DIR?.trim() || "")) {
+if (isProduction && ALLOW_EPHEMERAL_DATA) {
+  const temporaryRoot = path.resolve(tmpdir());
+  const relativeDataPath = path.relative(temporaryRoot, DATA_DIR);
+  if (path.isAbsolute(relativeDataPath) || relativeDataPath === ".." ||
+      relativeDataPath.startsWith(`..${path.sep}`)) {
+    throw new Error("ALLOW_EPHEMERAL_DATA=true requires DATA_DIR to be inside the operating-system temporary directory.");
+  }
+} else if (isProduction && !path.isAbsolute(process.env.DATA_DIR?.trim() || "")) {
   throw new Error("DATA_DIR must be an absolute persistent-storage path in production.");
 }
 if (EMAIL_PROVIDER && EMAIL_PROVIDER !== "resend") {
@@ -135,7 +151,10 @@ try {
   fs.writeFileSync(storageProbe, "", { flag: "wx", mode: 0o600 });
   fs.unlinkSync(storageProbe);
 } catch {
-  throw new Error("DATA_DIR must be a writable persistent directory.");
+  throw new Error("DATA_DIR must be a writable directory.");
+}
+if (isProduction && ALLOW_EPHEMERAL_DATA) {
+  console.warn("WARNING: Ephemeral DATA_DIR enabled. Roster and application data, rate limits, and logout revocations may be lost on restart; all sessions expire when this process stops.");
 }
 
 type UserRole = "student" | "warden" | "staff" | "admin" | "college_admin" | "super_admin" | "sector_admin" | "main_admin";
