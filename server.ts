@@ -882,6 +882,9 @@ function rateLimitLogin(req: express.Request, res: express.Response, next: expre
   const limit = loginRateLimitMap.get(key);
   if (limit && limit.count >= 10) {
     res.setHeader("Retry-After", String(Math.ceil((limit.resetTime - now) / 1000)));
+    if (req.path === "/api/auth/send-otp") {
+      console.warn("[OTP] Send request rejected by rate limit.");
+    }
     return res.status(429).json({ error: "Too many login attempts. Please try again later." });
   }
   if (!limit && loginRateLimitMap.size >= 10000) {

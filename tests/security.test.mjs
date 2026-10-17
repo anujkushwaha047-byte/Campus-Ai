@@ -955,6 +955,7 @@ test("OTP send requests are rate limited per client", async (t) => {
       phone: "9876543210",
     },
   })).response.status, 429);
+  assert.match(app.output(), /\[OTP\] Send request rejected by rate limit\./);
 });
 
 test("production startup rejects missing or insecure configuration without printing secrets", async () => {
