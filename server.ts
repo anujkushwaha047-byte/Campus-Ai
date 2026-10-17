@@ -1489,6 +1489,7 @@ app.post("/api/auth/send-otp", rateLimitLogin, async (req, res) => {
   if (cleanRoll.length < 2 || cleanRoll.length > 30 ||
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) ||
       cleanPhone.length !== 10) {
+    console.info("[OTP] Send request skipped: invalid request format.");
     return res.status(202).json(genericResponse);
   }
 
@@ -1499,12 +1500,17 @@ app.post("/api/auth/send-otp", rateLimitLogin, async (req, res) => {
   const cooldownKey = otpIdentityKey(cleanRoll, cleanEmail);
   const nextAllowedAt = otpCooldowns.get(cooldownKey);
   if (nextAllowedAt && now < nextAllowedAt) {
+    console.info("[OTP] Send request rejected by identity cooldown.");
     return res.status(429).json({ error: "Please wait before requesting another verification code." });
   }
   otpCooldowns.set(cooldownKey, now + 20_000);
 
   const eligibleStudent = matchingRegisteredStudent(cleanRoll, cleanEmail);
-  if (!eligibleStudent) return res.status(202).json(genericResponse);
+  if (!eligibleStudent) {
+    console.info("[OTP] Send request skipped: no matching registered student.");
+    return res.status(202).json(genericResponse);
+  }
+  console.info("[OTP] Registered student matched; continuing OTP delivery.");
 
   const generatedOtp = crypto.randomInt(100000, 1000000).toString();
   const expiresAt = now + 5 * 60 * 1000;
@@ -1517,6 +1523,7 @@ app.post("/api/auth/send-otp", rateLimitLogin, async (req, res) => {
       return res.status(202).json(genericResponse);
     }
   } else if (!IS_DEMO_MODE) {
+    console.error("[OTP] Send request skipped: Resend is not the active provider.");
     return res.status(202).json(genericResponse);
   }
 

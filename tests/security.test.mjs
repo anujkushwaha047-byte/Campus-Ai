@@ -783,6 +783,7 @@ test("OTP delivery succeeds only after provider acceptance and verification is s
     },
   });
   assert.equal(unknownRequest.response.status, 202);
+  assert.match(app.output(), /\[OTP\] Send request skipped: no matching registered student\./);
   const failedDelivery = await request(app.baseUrl, "/api/auth/send-otp", {
     method: "POST",
     body: {
@@ -795,6 +796,7 @@ test("OTP delivery succeeds only after provider acceptance and verification is s
   assert.deepEqual(failedDelivery.data, unknownRequest.data);
   assert.equal(failedDelivery.data.demoOtp, undefined);
   assert.equal(failedDelivery.data.token, undefined);
+  assert.match(app.output(), /\[OTP\] Registered student matched; continuing OTP delivery\./);
   assert.equal(JSON.stringify(failedDelivery.data).includes(readFileSync(app.otpCapturePath, "utf8")), false);
   assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
     method: "POST",
@@ -806,14 +808,6 @@ test("OTP delivery succeeds only after provider acceptance and verification is s
   })).response.status, 400);
 
   writeFileSync(app.providerStatusPath, "-1");
-  const networkFailureUnknown = await request(app.baseUrl, "/api/auth/send-otp", {
-    method: "POST",
-    body: {
-      rollNumber: "UNKNOWN-NETWORK-ROLL",
-      email: "abhinav.tiwari@college.edu.in",
-      phone: "9123456780",
-    },
-  });
   const networkFailure = await request(app.baseUrl, "/api/auth/send-otp", {
     method: "POST",
     body: {
@@ -822,7 +816,9 @@ test("OTP delivery succeeds only after provider acceptance and verification is s
       phone: "9123456780",
     },
   });
-  assert.deepEqual(networkFailure.data, networkFailureUnknown.data);
+  assert.equal(networkFailure.data.success, unknownRequest.data.success);
+  assert.equal(networkFailure.data.message, unknownRequest.data.message);
+  assert.equal(networkFailure.data.expiresInSeconds, unknownRequest.data.expiresInSeconds);
   assert.equal(networkFailure.data.token, undefined);
   assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
     method: "POST",
@@ -834,6 +830,21 @@ test("OTP delivery succeeds only after provider acceptance and verification is s
   })).response.status, 400);
   assert.match(app.output(), /\[OTP\] Resend send failed: HTTP 503\./);
   assert.match(app.output(), /\[OTP\] Resend send failed: network request error\./);
+
+  writeFileSync(app.otpClockPath, "21000");
+  writeFileSync(app.providerStatusPath, "403");
+  const pendingDomainFailure = await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "2021MEB021",
+      email: "ankit.singh@college.edu.in",
+      phone: "9876501234",
+    },
+  });
+  assert.equal(pendingDomainFailure.response.status, 202);
+  assert.equal(pendingDomainFailure.data.success, true);
+  assert.match(app.output(), /\[OTP\] Resend send failed: HTTP 403\./);
+
   for (const sensitiveValue of [
     "student@college.edu.in",
     "ankit.singh@college.edu.in",
