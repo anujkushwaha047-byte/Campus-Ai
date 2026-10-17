@@ -181,11 +181,16 @@ async function startApp(dataDir, production = false, overrides = {}) {
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => { output += chunk; });
   child.stderr.on("data", (chunk) => { output += chunk; });
+  let childError = null;
+  let childExit = null;
+  child.once("error", (error) => { childError = error; });
+  child.once("exit", (code, signal) => { childExit = { code, signal }; });
+  const childClosed = new Promise((resolve) => child.once("close", resolve));
 
   const baseUrl = `http://127.0.0.1:${port}`;
   let ready = false;
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (child.exitCode !== null) break;
+    if (childError || child.exitCode !== null) break;
     try {
       const response = await fetch(`${baseUrl}/api/health`);
       if (response.ok) {
@@ -196,8 +201,14 @@ async function startApp(dataDir, production = false, overrides = {}) {
     await delay(100);
   }
   if (!ready) {
-    child.kill();
-    throw new Error(`Test server failed to start. Process output: ${output}`);
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    await Promise.race([childClosed, delay(1000)]);
+    const status = childError
+      ? `spawn error: ${childError.message}`
+      : childExit
+        ? `exit code ${childExit.code}, signal ${childExit.signal ?? "none"}`
+        : "still running after readiness deadline";
+    throw new Error(`Test server failed to start (${status}). Process output: ${output}`);
   }
   return { child, baseUrl, origin, output: () => output, otpCapturePath, otpClockPath, providerStatusPath };
 }
