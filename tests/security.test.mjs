@@ -67,6 +67,7 @@ function productionEnvironment(dataDir) {
     SUPER_ADMIN_NAME: "Test Super Admin",
     SUPER_ADMIN_EMAIL: "superadmin@test.example",
     SUPER_ADMIN_PASSWORD: "test-super-admin-password",
+    ALLOWED_COLLEGE_EMAIL_DOMAIN: "@its.edu.in",
     EMAIL_PROVIDER: "resend",
     RESEND_API_KEY: "re_localstub_api_key_12345678",
     OTP_FROM_EMAIL: "noreply@campus.example.test",
@@ -135,6 +136,7 @@ async function startApp(dataDir, production = false, overrides = {}) {
       const status = existsSync(process.env.OTP_TEST_PROVIDER_STATUS_PATH)
         ? Number(readFileSync(process.env.OTP_TEST_PROVIDER_STATUS_PATH, "utf8"))
         : 200;
+      if (status === -1) throw new TypeError("simulated provider network failure");
       return new Response(status >= 200 && status < 300 ? '{"id":"test-message"}' : '{"message":"simulated failure"}', {
         status,
         headers: { "Content-Type": "application/json" }
@@ -160,6 +162,7 @@ async function startApp(dataDir, production = false, overrides = {}) {
     SUPER_ADMIN_NAME: "Test Super Admin",
     SUPER_ADMIN_EMAIL: "superadmin@test.example",
     SUPER_ADMIN_PASSWORD: "test-super-admin-password",
+    ALLOWED_COLLEGE_EMAIL_DOMAIN: production ? "@its.edu.in" : ".edu.in",
     EMAIL_PROVIDER: production ? "resend" : "",
     RESEND_API_KEY: production ? "re_localstub_api_key_12345678" : "",
     OTP_FROM_EMAIL: production ? "noreply@campus.example.test" : "",
@@ -632,6 +635,8 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
 
   await stopApp(app.child);
   app = null;
+  writeFileSync(path.join(dataDir, "students.csv"), readFileSync(path.join(dataDir, "students.csv"), "utf8")
+    .replace("student@college.edu.in", "student@its.edu.in"));
   productionApp = await startApp(dataDir, true);
   assert.equal((await request(productionApp.baseUrl, "/api/auth/session", {
     token: studentAfterRestart.data.token,
@@ -649,29 +654,45 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
     method: "POST",
     body: {
       rollNumber: "23AIML001",
-      email: "student@college.edu.in",
+      email: "student@its.edu.in",
       phone: "9876543210",
     },
   });
   assert.equal(productionOtp.response.status, 202);
   assert.equal(productionOtp.data.demoOtp, undefined);
+  assert.equal(productionOtp.data.token, undefined);
   assert.ok(existsSync(productionApp.otpCapturePath));
+  const productionOtpCode = readFileSync(productionApp.otpCapturePath, "utf8");
+  const rejectedDomainOtp = await request(productionApp.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "student@college.edu.in",
+      phone: "9876543210",
+    },
+  });
+  assert.equal(rejectedDomainOtp.response.status, productionOtp.response.status);
+  assert.equal(rejectedDomainOtp.data.success, true);
+  assert.equal(rejectedDomainOtp.data.demoOtp, undefined);
+  assert.equal(readFileSync(productionApp.otpCapturePath, "utf8"), productionOtpCode);
   const unknownProductionOtp = await request(productionApp.baseUrl, "/api/auth/send-otp", {
     method: "POST",
     body: {
       rollNumber: "UNKNOWN-PRODUCTION-ROLL",
-      email: "student@college.edu.in",
+      email: "student@its.edu.in",
       phone: "9876543210",
     },
   });
   assert.equal(unknownProductionOtp.response.status, productionOtp.response.status);
   assert.deepEqual(unknownProductionOtp.data, productionOtp.data);
-  const productionOtpCode = readFileSync(productionApp.otpCapturePath, "utf8");
+  assert.match(productionOtpCode, /^\d{6}$/);
+  assert.equal(JSON.stringify(productionOtp.data).includes(productionOtpCode), false);
+  assert.equal(productionApp.output().includes(productionOtpCode), false);
   const productionOtpVerification = await request(productionApp.baseUrl, "/api/auth/verify-otp", {
     method: "POST",
     body: {
       rollNumber: "23AIML001",
-      email: "student@college.edu.in",
+      email: "student@its.edu.in",
       otp: productionOtpCode,
     },
   });
@@ -679,6 +700,14 @@ test("auth, ownership, department scope, logout, persistence, CORS, and OTP prot
   assert.equal((await request(productionApp.baseUrl, "/api/auth/session", {
     token: productionOtpVerification.data.token,
   })).response.status, 200);
+  assert.equal((await request(productionApp.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "23AIML001",
+      email: "student@its.edu.in",
+      otp: productionOtpCode,
+    },
+  })).response.status, 400);
 
   let limitedLogin;
   for (let attempt = 0; attempt < 12; attempt += 1) {
@@ -760,11 +789,41 @@ test("OTP delivery succeeds only after provider acceptance and verification is s
   assert.equal(failedDelivery.response.status, 202);
   assert.deepEqual(failedDelivery.data, unknownRequest.data);
   assert.equal(failedDelivery.data.demoOtp, undefined);
+  assert.equal(failedDelivery.data.token, undefined);
+  assert.equal(JSON.stringify(failedDelivery.data).includes(readFileSync(app.otpCapturePath, "utf8")), false);
   assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
     method: "POST",
     body: {
       rollNumber: "2021MEB021",
       email: "ankit.singh@college.edu.in",
+      otp: readFileSync(app.otpCapturePath, "utf8"),
+    },
+  })).response.status, 400);
+
+  writeFileSync(app.providerStatusPath, "-1");
+  const networkFailureUnknown = await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "UNKNOWN-NETWORK-ROLL",
+      email: "abhinav.tiwari@college.edu.in",
+      phone: "9123456780",
+    },
+  });
+  const networkFailure = await request(app.baseUrl, "/api/auth/send-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "2023ECE052",
+      email: "abhinav.tiwari@college.edu.in",
+      phone: "9123456780",
+    },
+  });
+  assert.deepEqual(networkFailure.data, networkFailureUnknown.data);
+  assert.equal(networkFailure.data.token, undefined);
+  assert.equal((await request(app.baseUrl, "/api/auth/verify-otp", {
+    method: "POST",
+    body: {
+      rollNumber: "2023ECE052",
+      email: "abhinav.tiwari@college.edu.in",
       otp: readFileSync(app.otpCapturePath, "utf8"),
     },
   })).response.status, 400);
@@ -906,6 +965,7 @@ test("production startup rejects missing or insecure configuration without print
     { DATA_DIR: "relative-data" },
     { DEMO_MODE: "true" },
     { EMAIL_PROVIDER: "sendgrid" },
+    { ALLOWED_COLLEGE_EMAIL_DOMAIN: ".edu.in" },
     { RESEND_API_KEY: "not-a-resend-key" },
     { RESEND_API_KEY: "re_replace-with-your-private-key" },
     { OTP_FROM_EMAIL: "not-an-email-address" },

@@ -28,7 +28,7 @@
 
 - 🔐 **Login-First Gateway & Route Protection**: Complete public entry point with session validation on page refresh. Protected pages strictly require verified credentials.
 - 🤖 **AI Priority & Sentiment Triage**: Powered by Google Gemini AI to analyze issue descriptions, categorize complaints, assign urgency levels (Critical, High, Medium, Low), and calculate expected SLAs.
-- 🎓 **Verified Student Authentication**: Multi-factor OTP validation for official `.edu.in` university email addresses with rate limiting and secure session tokens.
+- 🎓 **Verified Student Authentication**: Multi-factor OTP validation for registered `@its.edu.in` addresses with rate limiting and secure session tokens.
 - ⚡ **Instant Demo Access**: 1-click test login options with pre-configured accounts for rapid demonstration and review.
 - 📊 **Real-time Resolution Tracking**: Dynamic status timelines (Submitted → AI Analyzed → Under Review → Assigned → In Progress → Resolved).
 - 🏢 **Multi-Department Management**: Segregated oversight for Hostels, Academics/Faculty, Library, Examination Cell, IT Infrastructure, and Campus Sanitation.
@@ -74,29 +74,7 @@
    ```
 
 3. **Configure environment variables:**
-   Create a `.env` file in the root directory:
-   ```env
-   GEMINI_API_KEY="your_google_gemini_api_key"
-   AUTH_SECRET="REPLACE_WITH_OUTPUT_OF_node_crypto_randomBytes_48_base64url"
-   ADMIN_EMAIL="admin@college.edu"
-   ADMIN_PASSWORD="a-unique-strong-legacy-admin-password"
-   STAFF_CREDENTIALS=""
-   SECTOR_ADMIN_CREDENTIALS=""
-   STAFF_PASSWORD=""
-   SUPER_ADMIN_NAME="Campus Super Admin"
-   SUPER_ADMIN_EMAIL="superadmin@college.edu"
-   SUPER_ADMIN_PASSWORD="use-a-unique-password-of-at-least-12-characters"
-   DEMO_MODE="true"
-   ALLOWED_COLLEGE_EMAIL_DOMAIN=".edu.in"
-   DATA_DIR="./data"
-   APP_URL="http://localhost:3000"
-   CORS_ALLOWED_ORIGINS=""
-   # Optional locally; when set, OTPs are delivered through Resend instead of demo-code display.
-   EMAIL_PROVIDER="resend"
-   RESEND_API_KEY="re_replace-with-your-private-key"
-   OTP_FROM_EMAIL="verified-sender@your-domain.example"
-   ```
-   Generate `AUTH_SECRET` with `node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"` and replace the placeholder; never use the placeholder value in production.
+   Copy `.env.example` to `.env`. Empty secret fields are intentional: local demo mode works without production credentials. If enabling local Resend delivery, set `EMAIL_PROVIDER=resend`, a private Resend API key, and a sender address at a domain verified in Resend. Never commit `.env`.
 
 4. **Start the development server:**
    ```bash
@@ -112,8 +90,16 @@
 
 ### Production configuration and persistence
 
-- `render.yaml` provisions a paid Starter web service with a 1 GB persistent disk mounted at `/var/data`, and sets `DATA_DIR=/var/data`. All JSON/CSV stores, including admin accounts, staff accounts, login throttling, and revoked sessions, must stay under this mount. Render persistent disks require a paid service and prevent scaling that service to multiple instances.
-- Render requires `APP_URL` (the exact public HTTPS origin, for example `https://your-service.onrender.com`), `AUTH_SECRET`, `ADMIN_PASSWORD`, `STAFF_CREDENTIALS`, `SECTOR_ADMIN_CREDENTIALS`, `SUPER_ADMIN_NAME`, `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD`, `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and `OTP_FROM_EMAIL`; set credential JSON and secret values privately in Render. `RESEND_API_KEY` must use Resend's `re_` key format. Verify a sending domain in Resend first; set `OTP_FROM_EMAIL` to an address at that verified domain (Resend may still reject sending if the domain or key is not active/authorized). The app validates the key's shape and sender email syntax at startup; it does not verify credentials against Resend or verify DNS ownership. Each credential object must contain an individual, unique 12+ character password for every account key in its matching server-side account map; neither staff nor sector accounts share the main Admin password. `CORS_ALLOWED_ORIGINS` is an optional comma-separated list of additional exact HTTPS origins. Use a high-entropy, non-placeholder `AUTH_SECRET` of at least 32 bytes. Demo login is disabled in production. `ADMIN_EMAIL` is optional and defaults to `admin@college.edu`; `GEMINI_API_KEY` is optional unless Gemini features are required.
+- `render.yaml` declares a paid Starter web service and a 1 GB persistent disk mounted at `/var/data`; it sets `DATA_DIR=/var/data` and `EMAIL_PROVIDER=resend`. The running Render service must actually have this blueprint applied and the disk mounted. If configuring the service manually, attach a persistent disk with mount path `/var/data` and set `DATA_DIR=/var/data` in the service's Environment settings. Do not point `DATA_DIR` at an unmounted path: startup creates the directory and performs a write/delete check, but cannot determine whether a writable directory is persistent. All JSON/CSV stores, including the student roster, managed accounts, login throttling, and revoked sessions, are under `DATA_DIR`. The single-instance disk-backed design requires a paid Render service and does not support scaling this service to multiple instances.
+- **Required Render variables:** `NODE_ENV=production`, `DEMO_MODE=false`, `APP_URL`, `AUTH_SECRET`, `ADMIN_PASSWORD`, `STAFF_CREDENTIALS`, `SECTOR_ADMIN_CREDENTIALS`, `SUPER_ADMIN_NAME`, `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD`, `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, `OTP_FROM_EMAIL`, `DATA_DIR=/var/data`, and `ALLOWED_COLLEGE_EMAIL_DOMAIN=@its.edu.in`. Render injects `PORT`. `CORS_ALLOWED_ORIGINS` is optional and accepts a comma-separated list of additional exact HTTPS origins. `ADMIN_EMAIL` is optional and defaults to `admin@college.edu`; `GEMINI_API_KEY` is optional unless Gemini features are required.
+- **Credential formats:** `AUTH_SECRET` must be a unique, non-placeholder, high-entropy secret of at least 32 bytes; generate one with `node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"`. `APP_URL` must be the exact public HTTPS origin, with no path or trailing slash. `ADMIN_PASSWORD` is 12-200 characters and belongs to `ADMIN_EMAIL`. `STAFF_CREDENTIALS` must be a JSON object containing all four supported keys: `warden@college.edu`, `maintenance@college.edu`, `it.staff@college.edu`, and `electrical@college.edu`. `SECTOR_ADMIN_CREDENTIALS` must be a JSON object containing all sixteen keys: `it.admin@college.edu`, `electrical.admin@college.edu`, `water.admin@college.edu`, `mess.admin@college.edu`, `housekeeping.admin@college.edu`, `hostel.admin@college.edu`, `fire.admin@college.edu`, `security.admin@college.edu`, `facilities.admin@college.edu`, `transport.admin@college.edu`, `sports.admin@college.edu`, `academics.admin@college.edu`, `exam.admin@college.edu`, `library.admin@college.edu`, `fees.admin@college.edu`, and `general.admin@college.edu`. Each JSON value must be a string containing a distinct 12-200 character password; all passwords must be unique across `ADMIN_PASSWORD`, both maps, and `SUPER_ADMIN_PASSWORD`. Emails must be exact lowercase map keys. `SUPER_ADMIN_NAME` is 1-100 characters, `SUPER_ADMIN_EMAIL` must match a valid email address, and `SUPER_ADMIN_PASSWORD` must be 12-200 characters. Enter actual passwords and secrets only in Render's private Environment settings; do not put them in `render.yaml`, `.env.example`, or source control.
+- **Resend OTP setup:** Set `EMAIL_PROVIDER=resend`; `RESEND_API_KEY` must match `^re_[A-Za-z0-9_-]{8,}$` and must not use a placeholder/test prefix. `OTP_FROM_EMAIL` must match the app's email-address syntax and use a domain verified and authorized in Resend. The app checks configuration shape at startup; Resend confirms that the key and sender are authorized when delivery is attempted. Student email OTP is sent only to the registered matching roll-number/email pair at `@its.edu.in`. Production responses, page content, client bundle, and logs must not disclose OTP values. Provider rejection/network failures do not create a verifiable challenge or an authenticated session; their send response intentionally remains generic so it does not reveal whether a student is registered.
+- **Configure and redeploy on Render:**
+  1. In the Render Dashboard, open the existing `campus-ai` Web Service. Confirm it is on a paid plan and has a persistent disk mounted at `/var/data`. If not, attach one at that exact mount path; a `DATA_DIR` value by itself does not provision persistence.
+  2. Open **Environment**. Add or correct every required variable listed above. Set `DATA_DIR` to `/var/data`, `EMAIL_PROVIDER` to `resend`, and the student email domain to `@its.edu.in`. Render's blueprint supplies these three non-secret settings only when the blueprint is applied; verify they are actually present on the live service.
+  3. Set `APP_URL` to the service's exact HTTPS URL. Generate `AUTH_SECRET` privately. Create strong unique passwords for all accounts and enter the JSON credential maps in Render without changing or omitting any account keys. Obtain `RESEND_API_KEY` from Resend and verify the sending domain before setting `OTP_FROM_EMAIL`. Do not paste secrets into GitHub, `render.yaml`, or deployment logs.
+  4. Save the environment changes, then use **Manual Deploy → Deploy latest commit** (or trigger a deploy after saving). Watch the deploy logs: startup must complete and `/api/health` must pass. A missing, invalid, or unwritable setting is intentionally a startup failure; correct it in Render rather than weakening validation.
+  5. Provision the institution's actual student roster as `students.csv` under the persistent disk using the existing header `student_id,roll_number,email,phone,email_verified,registration_date`. Production OTP works only for a unique matching roster record with an `@its.edu.in` address. Test delivery with an enrolled student and check provider delivery status in Resend; never use or expose OTP values as a demo shortcut.
 - Authentication tokens remain valid across server restarts only when the same `AUTH_SECRET` is retained. Legacy static Admin/Warden/Staff tokens are also bound to their configured password version and are invalidated when the corresponding environment password changes. Demo tokens are rejected when demo mode is disabled.
 - Tokens must carry session schema version 2. Tokens issued before this rollout are rejected, including existing student, static staff/admin, and managed-admin sessions; users must sign in again after deployment. Keep the existing `AUTH_SECRET` unchanged to avoid additional, unrelated token invalidation.
 - The first server startup hashes the configured Super Admin password and persists the account in `admin-accounts.json`. Later restarts do not reset it from environment variables. To rotate it, use the Super Admin password-change form on the Admin Dashboard; the current password is required and existing Super Admin sessions are revoked. College Admin account changes are serialized to prevent concurrent duplicate emails.

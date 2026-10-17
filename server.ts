@@ -31,6 +31,9 @@ const STAFF_PASSWORD = process.env.STAFF_PASSWORD || "";
 const SUPER_ADMIN_NAME = process.env.SUPER_ADMIN_NAME?.trim() || "";
 const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL?.trim().toLowerCase() || "";
 const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || "";
+const ALLOWED_COLLEGE_EMAIL_DOMAIN = (
+  process.env.ALLOWED_COLLEGE_EMAIL_DOMAIN || (isProduction ? "@its.edu.in" : ".edu.in")
+).toLowerCase();
 
 const configuredOrigins = [process.env.APP_URL, ...(process.env.CORS_ALLOWED_ORIGINS || "").split(",")]
   .map((origin) => origin?.trim())
@@ -97,6 +100,9 @@ if (configuredDemoMode && !["true", "false"].includes(configuredDemoMode)) {
 }
 if (isProduction && configuredDemoMode !== "false") {
   throw new Error("DEMO_MODE must be explicitly set to false in production.");
+}
+if (isProduction && ALLOWED_COLLEGE_EMAIL_DOMAIN !== "@its.edu.in") {
+  throw new Error("ALLOWED_COLLEGE_EMAIL_DOMAIN must be set to @its.edu.in in production.");
 }
 if (isProduction && !path.isAbsolute(process.env.DATA_DIR?.trim() || "")) {
   throw new Error("DATA_DIR must be an absolute persistent-storage path in production.");
@@ -506,8 +512,6 @@ function publicAdminAccount(account: ManagedAdminAccount) {
     updatedAt: account.updatedAt,
   };
 }
-
-const ALLOWED_COLLEGE_EMAIL_DOMAIN = (process.env.ALLOWED_COLLEGE_EMAIL_DOMAIN || ".edu.in").toLowerCase();
 
 interface StudentCSVItem {
   student_id: string;
@@ -977,6 +981,7 @@ async function deliverStudentOtp(email: string, otp: string): Promise<void> {
 }
 
 function matchingRegisteredStudent(rollNumber: string, email: string): StudentCSVItem | null {
+  if (!email.endsWith(ALLOWED_COLLEGE_EMAIL_DOMAIN)) return null;
   const students = readStudentsFromCsv();
   const matchesByRoll = students.filter((student) => student.roll_number.toUpperCase() === rollNumber);
   const matchesByEmail = students.filter((student) => student.email.toLowerCase() === email);

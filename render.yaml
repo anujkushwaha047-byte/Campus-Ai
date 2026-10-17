@@ -16,7 +16,7 @@ services:
       - key: DEMO_MODE
         value: "false"
       - key: ALLOWED_COLLEGE_EMAIL_DOMAIN
-        value: .edu.in
+        value: "@its.edu.in"
       - key: DATA_DIR
         value: /var/data
       - key: APP_URL

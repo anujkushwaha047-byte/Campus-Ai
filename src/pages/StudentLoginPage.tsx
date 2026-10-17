@@ -104,11 +104,11 @@ export const StudentLoginPage: React.FC<StudentLoginPageProps> = ({
       const data = await res.json();
       if (data.success) {
         setMaskedEmail(data.maskedEmail);
-        setDemoCode(data.demoOtp || "");
+        setDemoCode(import.meta.env.DEV ? data.demoOtp || "" : "");
         setStep("otp");
         setCountdown(30);
         // Pre-fill demo OTP code for seamless testing
-        if (data.demoOtp) {
+        if (import.meta.env.DEV && data.demoOtp) {
           setOtp(data.demoOtp.split(""));
         } else {
           setOtp(["", "", "", "", "", ""]);
@@ -478,7 +478,7 @@ export const StudentLoginPage: React.FC<StudentLoginPageProps> = ({
                 </div>
 
                 {/* Demo Helper Banner */}
-                {demoCode && (
+                {import.meta.env.DEV && demoCode && (
                   <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs flex items-center justify-between">
                     <span className="flex items-center gap-1.5 font-medium">
                       <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />

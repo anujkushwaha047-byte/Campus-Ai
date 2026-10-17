@@ -93,10 +93,10 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
       const data = await res.json();
       if (data.success) {
         setMaskedEmail(data.maskedEmail);
-        setDemoCode(data.demoOtp || "");
+        setDemoCode(import.meta.env.DEV ? data.demoOtp || "" : "");
         setStep("otp");
         setCountdown(30);
-        if (data.demoOtp) {
+        if (import.meta.env.DEV && data.demoOtp) {
           setOtp(data.demoOtp.split(""));
         } else {
           setOtp(["", "", "", "", "", ""]);
@@ -341,7 +341,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
                 </div>
               </div>
 
-              {demoCode && (
+              {import.meta.env.DEV && demoCode && (
                 <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[11px] flex items-center justify-between">
                   <span>Demo OTP: <strong className="font-mono text-xs">{demoCode}</strong></span>
                   <button
