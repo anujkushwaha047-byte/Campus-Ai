@@ -197,6 +197,7 @@ const STUDENTS_CSV_PATH = path.join(DATA_DIR, "students.csv");
 const COMPLAINTS_JSON_PATH = path.join(DATA_DIR, "complaints.json");
 const NOTIFICATIONS_JSON_PATH = path.join(DATA_DIR, "notifications.json");
 const ADMIN_ACCOUNTS_JSON_PATH = path.join(DATA_DIR, "admin-accounts.json");
+const STAFF_ACCOUNTS_JSON_PATH = path.join(DATA_DIR, "staff-accounts.json");
 const LOGIN_ATTEMPTS_JSON_PATH = path.join(DATA_DIR, "login-attempts.json");
 const REVOKED_SESSIONS_JSON_PATH = path.join(DATA_DIR, "revoked-sessions.json");
 
@@ -232,7 +233,24 @@ interface ManagedAdminAccount {
   updatedAt: string;
 }
 
+type ManagedStaffRole = "warden" | "staff";
+
+interface ManagedStaffAccount {
+  id: string;
+  staffId: string;
+  name: string;
+  email: string;
+  role: ManagedStaffRole;
+  department: string;
+  passwordHash: string;
+  active: boolean;
+  tokenVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 let managedAdminAccounts: ManagedAdminAccount[] = [];
+let managedStaffAccounts: ManagedStaffAccount[] = [];
 let managedAdminMutationQueue: Promise<void> = Promise.resolve();
 const loginRateLimitMap = new Map<string, { count: number; resetTime: number }>();
 const revokedSessionHashes = new Map<string, number>();
@@ -275,6 +293,107 @@ async function verifyPassword(password: string, encodedHash: string): Promise<bo
 
 function saveManagedAdminAccounts(): void {
   writeFileAtomically(ADMIN_ACCOUNTS_JSON_PATH, JSON.stringify(managedAdminAccounts, null, 2));
+}
+
+function saveManagedStaffAccounts(): void {
+  writeFileAtomically(STAFF_ACCOUNTS_JSON_PATH, JSON.stringify(managedStaffAccounts, null, 2));
+}
+
+function publicStaffAccount(account: ManagedStaffAccount) {
+  const { passwordHash: _passwordHash, ...publicAccount } = account;
+  return publicAccount;
+}
+
+function normalizedStaffId(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+function isReservedStaffId(staffId: string, exceptAccountId?: string): boolean {
+  const normalized = normalizedStaffId(staffId);
+  return Object.values(STAFF_ACCOUNT_DEFINITIONS).some((account) => account.staffId === normalized) ||
+    managedStaffAccounts.some((account) =>
+      account.id !== exceptAccountId && normalizedStaffId(account.staffId) === normalized);
+}
+
+function staffIdIsTaken(staffId: string, exceptAccountId?: string): boolean {
+  const normalized = normalizedStaffId(staffId);
+  return readStudentsFromCsv().some((student) => student.roll_number.trim().toUpperCase() === normalized) ||
+    isReservedStaffId(normalized, exceptAccountId);
+}
+
+function generateStaffId(role: ManagedStaffRole, department: string): string {
+  const cleanDepartment = department.trim().toUpperCase();
+  const prefix = role === "warden"
+    ? "WARDEN"
+    : cleanDepartment.startsWith("IT")
+      ? "IT"
+      : cleanDepartment.startsWith("ELECTRICAL")
+        ? "ELEC"
+        : cleanDepartment.startsWith("ROOM MAINTENANCE") || cleanDepartment.startsWith("MAINTENANCE")
+          ? "MAINT"
+          : cleanDepartment.replace(/[^A-Z0-9]+/g, "").slice(0, 8);
+  for (let sequence = 1; sequence <= 999_999; sequence += 1) {
+    const candidate = `${prefix}/${String(sequence).padStart(3, "0")}`;
+    if (!staffIdIsTaken(candidate)) return candidate;
+  }
+  throw new Error("No available Staff ID could be generated for the selected department.");
+}
+
+async function initializeManagedStaffAccounts(): Promise<void> {
+  const configuredStaffIds = Object.values(STAFF_ACCOUNT_DEFINITIONS).map((account) => account.staffId);
+  const studentRolls = new Set(readStudentsFromCsv().map((student) => student.roll_number.trim().toUpperCase()));
+  if (new Set(configuredStaffIds).size !== configuredStaffIds.length ||
+      configuredStaffIds.some((staffId) => studentRolls.has(staffId))) {
+    throw new Error("A configured Staff ID conflicts with a student roll number or another staff account.");
+  }
+  if (!fs.existsSync(STAFF_ACCOUNTS_JSON_PATH)) {
+    managedStaffAccounts = [];
+    return;
+  }
+  const parsed: unknown = JSON.parse(fs.readFileSync(STAFF_ACCOUNTS_JSON_PATH, "utf8"));
+  const isAccount = (account: unknown): account is ManagedStaffAccount => {
+    if (!account || typeof account !== "object") return false;
+    const candidate = account as Record<string, unknown>;
+    return typeof candidate.id === "string" && typeof candidate.staffId === "string" &&
+      /^[A-Z][A-Z0-9_-]{0,15}\/\d{3,6}$/.test(candidate.staffId) &&
+      typeof candidate.name === "string" && typeof candidate.email === "string" &&
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate.email) &&
+      (candidate.role === "warden" || candidate.role === "staff") &&
+      typeof candidate.department === "string" && candidate.department.length > 0 &&
+      typeof candidate.passwordHash === "string" &&
+      /^scrypt\$16384\$8\$1\$[a-f0-9]{32}\$[a-f0-9]{128}$/.test(candidate.passwordHash) &&
+      typeof candidate.active === "boolean" && Number.isInteger(candidate.tokenVersion) &&
+      (candidate.tokenVersion as number) >= 0 &&
+      typeof candidate.createdAt === "string" && typeof candidate.updatedAt === "string";
+  };
+  if (!Array.isArray(parsed) || !parsed.every(isAccount)) {
+    throw new Error("The persisted staff account store is invalid; refusing to start.");
+  }
+  const ids = parsed.map((account) => account.id);
+  const staffIds = parsed.map((account) => normalizedStaffId(account.staffId));
+  const emails = parsed.map((account) => normalizeEmail(account.email));
+  if (new Set(ids).size !== ids.length || new Set(staffIds).size !== staffIds.length ||
+      new Set(emails).size !== emails.length) {
+    throw new Error("Duplicate staff account identifiers exist; refusing to start.");
+  }
+  if (staffIds.some((staffId) => studentRolls.has(staffId)) ||
+      staffIds.some((staffId) => Object.values(STAFF_ACCOUNT_DEFINITIONS)
+        .some((account) => account.staffId === staffId))) {
+    throw new Error("A Staff ID conflicts with a student roll number or configured staff account.");
+  }
+  const staffEmails = new Set(Object.keys(STAFF_ACCOUNT_DEFINITIONS).map(normalizeEmail));
+  const reservedAdminEmails = new Set([
+    normalizeEmail(process.env.ADMIN_EMAIL || "admin@college.edu"),
+    ...Object.keys(SECTOR_ADMIN_MAP).map(normalizeEmail),
+  ]);
+  if (parsed.some((account) =>
+    staffEmails.has(normalizeEmail(account.email)) ||
+    reservedAdminEmails.has(normalizeEmail(account.email)) ||
+    readStudentsFromCsv().some((student) => normalizeEmail(student.email) === normalizeEmail(account.email)) ||
+    managedAdminAccounts.some((admin) => normalizeEmail(admin.email) === normalizeEmail(account.email)))) {
+    throw new Error("A persisted staff account email conflicts with another account.");
+  }
+  managedStaffAccounts = parsed;
 }
 
 function loadLoginAttempts(): void {
@@ -523,6 +642,9 @@ function saveStudentToCsv(data: {
   const cleanRoll = data.rollNumber.trim().toUpperCase();
   const cleanEmail = data.email.trim().toLowerCase();
   const cleanPhone = data.phone.trim().replace(/\D/g, "");
+  if (isReservedStaffId(cleanRoll)) {
+    throw new Error("This roll number is reserved for a staff account.");
+  }
 
   const existingIdx = students.findIndex(s => 
     s.roll_number.toUpperCase() === cleanRoll || 
@@ -586,7 +708,7 @@ interface UserPayload {
   role: UserRole;
   sector?: string;
   department?: string;
-  authSource?: "demo" | "static" | "otp";
+  authSource?: "demo" | "static" | "managed_staff" | "otp";
   credentialVersion?: string;
   exp: number;
 }
@@ -638,7 +760,8 @@ function verifyAuthToken(token: string): UserPayload | null {
       if (!password || payload.credentialVersion !== credentialVersion(password)) return null;
     }
     if (payload.authSource !== undefined &&
-        payload.authSource !== "demo" && payload.authSource !== "static" && payload.authSource !== "otp") return null;
+        payload.authSource !== "demo" && payload.authSource !== "static" &&
+        payload.authSource !== "managed_staff" && payload.authSource !== "otp") return null;
 
     return payload;
   } catch (err) {
@@ -675,6 +798,13 @@ function requireAuth(req: express.Request, res: express.Response, next: express.
     const account = managedAdminAccounts.find((entry) => entry.id === user.studentId);
     if (!account || !account.active || account.role !== user.role || account.tokenVersion !== user.accountVersion) {
       return res.status(401).json({ error: "This administrator account is inactive or its session has expired. Please log in again." });
+    }
+  }
+  if (user.authSource === "managed_staff") {
+    const account = managedStaffAccounts.find((entry) => entry.id === user.studentId);
+    if (!account || !account.active || account.role !== user.role ||
+        account.tokenVersion !== user.accountVersion || normalizeEmail(account.email) !== normalizeEmail(user.email)) {
+      return res.status(401).json({ error: "This staff account is inactive or its session has expired. Please log in again." });
     }
   }
 
@@ -1700,11 +1830,11 @@ const handleAdminLogin = async (req: express.Request, res: express.Response) => 
   });
 };
 
-const STAFF_ACCOUNT_DEFINITIONS: Record<string, { id: string; name: string; role: "warden" | "staff"; department: string }> = {
-  "warden@college.edu": { id: "warden-a", name: "Hostel Warden", role: "warden", department: "Hostel / Warden" },
-  "maintenance@college.edu": { id: "maintenance-staff", name: "Maintenance Staff", role: "staff", department: "Room Maintenance" },
-  "it.staff@college.edu": { id: "it-admin", name: "IT Admin", role: "staff", department: "IT / Network" },
-  "electrical@college.edu": { id: "electrical-staff", name: "Electrical Staff", role: "staff", department: "Electrical" },
+const STAFF_ACCOUNT_DEFINITIONS: Record<string, { id: string; staffId: string; name: string; role: "warden" | "staff"; department: string }> = {
+  "warden@college.edu": { id: "warden-a", staffId: "WARDEN/001", name: "Hostel Warden", role: "warden", department: "Hostel / Warden" },
+  "maintenance@college.edu": { id: "maintenance-staff", staffId: "MAINT/001", name: "Maintenance Staff", role: "staff", department: "Room Maintenance" },
+  "it.staff@college.edu": { id: "it-admin", staffId: "IT/001", name: "IT Admin", role: "staff", department: "IT / Network" },
+  "electrical@college.edu": { id: "electrical-staff", staffId: "ELEC/001", name: "Electrical Staff", role: "staff", department: "Electrical" },
 };
 
 const STAFF_CREDENTIALS = parseCredentialMap(
@@ -1712,7 +1842,7 @@ const STAFF_CREDENTIALS = parseCredentialMap(
   "STAFF_CREDENTIALS",
   Object.keys(STAFF_ACCOUNT_DEFINITIONS)
 );
-const STAFF_ACCOUNTS: Record<string, { password: string; id: string; name: string; role: "warden" | "staff"; department: string }> =
+const STAFF_ACCOUNTS: Record<string, { password: string; id: string; staffId: string; name: string; role: "warden" | "staff"; department: string }> =
   Object.fromEntries(Object.entries(STAFF_ACCOUNT_DEFINITIONS).map(([email, account]) => [
   email,
   {
@@ -1731,21 +1861,38 @@ if (new Set(configuredStaticPasswords).size !== configuredStaticPasswords.length
   throw new Error("System, sector-admin, and staff account passwords must be unique.");
 }
 
-app.post("/api/auth/staff-login", rateLimitLogin, (req, res) => {
-  const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
-  const account = STAFF_ACCOUNTS[email];
-  if (!account || !account.password || typeof req.body.password !== "string" || req.body.password !== account.password) {
+app.post("/api/auth/staff-login", rateLimitLogin, async (req, res) => {
+  const identifierValue = req.body.identifier ?? req.body.staffId ?? req.body.email;
+  const identifier = typeof identifierValue === "string" ? identifierValue.trim() : "";
+  const email = normalizeEmail(identifier);
+  const normalizedId = normalizedStaffId(identifier);
+  const staticMatch = Object.entries(STAFF_ACCOUNTS).find(([accountEmail, account]) =>
+    accountEmail === email || account.staffId === normalizedId);
+  const managedMatch = managedStaffAccounts.find((account) =>
+    normalizeEmail(account.email) === email || normalizedStaffId(account.staffId) === normalizedId);
+  const validPassword = typeof req.body.password === "string" && (
+    staticMatch
+      ? Boolean(staticMatch[1].password) && req.body.password === staticMatch[1].password
+      : managedMatch
+        ? managedMatch.active && await verifyPassword(req.body.password, managedMatch.passwordHash)
+        : false
+  );
+  if ((!staticMatch && !managedMatch) || !validPassword || (managedMatch && !managedMatch.active)) {
     return res.status(401).json({ error: "Invalid staff credentials." });
   }
+  const account = staticMatch?.[1] || managedMatch!;
+  const accountEmail = staticMatch?.[0] || managedMatch!.email;
   const token = generateAuthToken({
     studentId: account.id,
     rollNumber: "STAFF",
-    email,
+    email: accountEmail,
     name: account.name,
     role: account.role,
     department: account.department,
-    authSource: "static",
-    credentialVersion: credentialVersion(account.password),
+    ...(managedMatch ? { accountVersion: managedMatch.tokenVersion, authSource: "managed_staff" as const } : {
+      authSource: "static" as const,
+      credentialVersion: credentialVersion(staticMatch![1].password),
+    }),
   });
   res.json({
     success: true,
@@ -1754,8 +1901,9 @@ app.post("/api/auth/staff-login", rateLimitLogin, (req, res) => {
     staff: {
       id: account.id,
       studentId: account.id,
+      staffId: account.staffId,
       rollNumber: "STAFF",
-      email,
+      email: accountEmail,
       name: account.name,
       phone: "",
       department: account.department,
@@ -1772,6 +1920,141 @@ app.post("/api/auth/admin-login", rateLimitLogin, handleAdminLogin);
 
 app.get("/api/admin/accounts", requireAuth, requireSuperAdmin, (_req, res) => {
   res.json({ accounts: managedAdminAccounts.map(publicAdminAccount) });
+});
+
+app.get("/api/admin/staff-accounts", requireAuth, requireSuperAdmin, (_req, res) => {
+  res.json({ accounts: managedStaffAccounts.map(publicStaffAccount) });
+});
+
+app.post("/api/admin/staff-accounts", requireAuth, requireSuperAdmin, rateLimitAdminMutation, async (req, res) => {
+  const { name, email, password, role, department, staffId } = req.body;
+  if (role !== "warden" && role !== "staff") {
+    return res.status(400).json({ error: "Staff accounts must use the warden or staff role." });
+  }
+  if (typeof name !== "string" || !name.trim() || name.trim().length > 100) {
+    return res.status(400).json({ error: "Enter a name between 1 and 100 characters." });
+  }
+  if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    return res.status(400).json({ error: "Enter a valid email address." });
+  }
+  if (typeof password !== "string" || password.length < 12 || password.length > 200) {
+    return res.status(400).json({ error: "Passwords must be between 12 and 200 characters." });
+  }
+  if (typeof department !== "string" || !department.trim() || department.trim().length > 100) {
+    return res.status(400).json({ error: "Enter a department between 1 and 100 characters." });
+  }
+  if (staffId !== undefined && (typeof staffId !== "string" ||
+      !/^[A-Z][A-Z0-9_-]{0,15}\/\d{3,6}$/i.test(staffId.trim()))) {
+    return res.status(400).json({ error: "Staff IDs must use a prefix and a slash followed by 3 to 6 digits." });
+  }
+
+  const cleanEmail = normalizeEmail(email);
+  const legacyAdminEmail = normalizeEmail(process.env.ADMIN_EMAIL || "admin@college.edu");
+  if (cleanEmail === legacyAdminEmail || Boolean(SECTOR_ADMIN_MAP[cleanEmail]) ||
+      readStudentsFromCsv().some((student) => normalizeEmail(student.email) === cleanEmail) ||
+      Object.prototype.hasOwnProperty.call(STAFF_ACCOUNTS, cleanEmail)) {
+    return res.status(409).json({ error: "An account with this email address already exists." });
+  }
+
+  return withManagedAdminAccountsLock(async () => {
+    if (managedAdminAccounts.some((account) => normalizeEmail(account.email) === cleanEmail) ||
+        managedStaffAccounts.some((account) => normalizeEmail(account.email) === cleanEmail)) {
+      return res.status(409).json({ error: "An account with this email address already exists." });
+    }
+    let cleanStaffId: string;
+    try {
+      cleanStaffId = staffId === undefined
+        ? generateStaffId(role, department)
+        : normalizedStaffId(staffId);
+      if (staffIdIsTaken(cleanStaffId)) {
+        return res.status(409).json({ error: "That Staff ID is already assigned or conflicts with a student roll number." });
+      }
+    } catch (error) {
+      console.error("Failed to allocate a staff identifier.");
+      return res.status(500).json({ error: "Failed to allocate a Staff ID." });
+    }
+    try {
+      const now = new Date().toISOString();
+      const account: ManagedStaffAccount = {
+        id: crypto.randomUUID(),
+        staffId: cleanStaffId,
+        name: name.trim(),
+        email: cleanEmail,
+        role,
+        department: department.trim(),
+        passwordHash: await hashPassword(password),
+        active: true,
+        tokenVersion: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      if (staffIdIsTaken(cleanStaffId)) {
+        return res.status(409).json({ error: "That Staff ID is already assigned or conflicts with a student roll number." });
+      }
+      managedStaffAccounts.push(account);
+      try {
+        saveManagedStaffAccounts();
+      } catch (error) {
+        managedStaffAccounts.pop();
+        throw error;
+      }
+      return res.status(201).json({ account: publicStaffAccount(account) });
+    } catch (error) {
+      console.error("Failed to create staff account.");
+      return res.status(500).json({ error: "Failed to save the staff account." });
+    }
+  });
+});
+
+app.patch("/api/admin/staff-accounts/:id", requireAuth, requireSuperAdmin, rateLimitAdminMutation, (req, res) => {
+  if (typeof req.body.active !== "boolean" || req.body.role !== undefined || req.body.staffId !== undefined) {
+    return res.status(400).json({ error: "Only the account active state can be changed." });
+  }
+  return withManagedAdminAccountsLock(() => {
+    const account = managedStaffAccounts.find((entry) => entry.id === req.params.id);
+    if (!account) return res.status(404).json({ error: "Staff account not found." });
+
+    const previousActive = account.active;
+    const previousVersion = account.tokenVersion;
+    account.active = req.body.active;
+    account.tokenVersion += 1;
+    account.updatedAt = new Date().toISOString();
+    try {
+      saveManagedStaffAccounts();
+      return res.json({ account: publicStaffAccount(account) });
+    } catch (error) {
+      account.active = previousActive;
+      account.tokenVersion = previousVersion;
+      console.error("Failed to update staff account.");
+      return res.status(500).json({ error: "Failed to save the staff account." });
+    }
+  });
+});
+
+app.post("/api/admin/staff-accounts/:id/reset-password", requireAuth, requireSuperAdmin, rateLimitAdminMutation, async (req, res) => {
+  const { password } = req.body;
+  if (typeof password !== "string" || password.length < 12 || password.length > 200) {
+    return res.status(400).json({ error: "Passwords must be between 12 and 200 characters." });
+  }
+  return withManagedAdminAccountsLock(async () => {
+    const account = managedStaffAccounts.find((entry) => entry.id === req.params.id);
+    if (!account) return res.status(404).json({ error: "Staff account not found." });
+
+    const previousHash = account.passwordHash;
+    const previousVersion = account.tokenVersion;
+    try {
+      account.passwordHash = await hashPassword(password);
+      account.tokenVersion += 1;
+      account.updatedAt = new Date().toISOString();
+      saveManagedStaffAccounts();
+      return res.json({ account: publicStaffAccount(account) });
+    } catch (error) {
+      account.passwordHash = previousHash;
+      account.tokenVersion = previousVersion;
+      console.error("Failed to reset staff account password.");
+      return res.status(500).json({ error: "Failed to save the staff account password." });
+    }
+  });
 });
 
 app.post("/api/admin/accounts", requireAuth, requireSuperAdmin, rateLimitAdminMutation, async (req, res) => {
@@ -1792,12 +2075,14 @@ app.post("/api/admin/accounts", requireAuth, requireSuperAdmin, rateLimitAdminMu
   const legacyAdminEmail = normalizeEmail(process.env.ADMIN_EMAIL || "admin@college.edu");
   if (cleanEmail === legacyAdminEmail || Boolean(SECTOR_ADMIN_MAP[cleanEmail]) ||
       readStudentsFromCsv().some((student) => normalizeEmail(student.email) === cleanEmail) ||
-      Object.prototype.hasOwnProperty.call(STAFF_ACCOUNTS, cleanEmail)) {
+      Object.prototype.hasOwnProperty.call(STAFF_ACCOUNTS, cleanEmail) ||
+      managedStaffAccounts.some((account) => normalizeEmail(account.email) === cleanEmail)) {
     return res.status(409).json({ error: "An account with this email address already exists." });
   }
 
   return withManagedAdminAccountsLock(async () => {
-    if (managedAdminAccounts.some((account) => normalizeEmail(account.email) === cleanEmail)) {
+    if (managedAdminAccounts.some((account) => normalizeEmail(account.email) === cleanEmail) ||
+        managedStaffAccounts.some((account) => normalizeEmail(account.email) === cleanEmail)) {
       return res.status(409).json({ error: "An account with this email address already exists." });
     }
     try {
@@ -3196,6 +3481,7 @@ async function startServer() {
   loadLoginAttempts();
   loadRevokedSessions();
   await initializeManagedAdminAccounts();
+  await initializeManagedStaffAccounts();
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

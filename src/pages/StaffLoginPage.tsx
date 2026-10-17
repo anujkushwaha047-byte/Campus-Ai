@@ -10,7 +10,7 @@ interface StaffLoginPageProps {
 
 export const StaffLoginPage: React.FC<StaffLoginPageProps> = ({ onLoginSuccess }) => {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("warden@college.edu");
+  const [identifier, setIdentifier] = useState("warden@college.edu");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -23,7 +23,7 @@ export const StaffLoginPage: React.FC<StaffLoginPageProps> = ({ onLoginSuccess }
       const response = await fetch("/api/auth/staff-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ identifier, password }),
       });
       const data = await response.json();
       if (!response.ok || !data.staff || !data.token) throw new Error(data.error || "Staff login failed.");
@@ -42,7 +42,7 @@ export const StaffLoginPage: React.FC<StaffLoginPageProps> = ({ onLoginSuccess }
     <form onSubmit={submit} className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4">
       <div className="flex items-center gap-3"><ShieldCheck className="text-blue-600" /><div><h1 className="text-xl font-bold">Staff Login</h1><p className="text-xs text-slate-500">Warden and department access</p></div></div>
       {error && <p className="text-sm text-rose-600">{error}</p>}
-      <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="Staff email" className="w-full p-3 rounded-xl border border-slate-200" />
+      <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} type="text" placeholder="Staff ID or email" className="w-full p-3 rounded-xl border border-slate-200" />
       <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Password" className="w-full p-3 rounded-xl border border-slate-200" />
       <button disabled={loading} className="w-full p-3 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-50">{loading ? "Signing in..." : "Sign in"}</button>
     </form>

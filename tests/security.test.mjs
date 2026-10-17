@@ -1031,3 +1031,149 @@ test("failed rate-limit persistence restores the previous in-memory attempt coun
   assert.equal(persistedAttempts.length, 1);
   assert.equal(persistedAttempts[0].count, 2);
 });
+
+test("staff IDs resolve to staff accounts and remain bound to valid credentials and permissions", async (t) => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), `campus-ai-staff-id-${randomUUID()}-`));
+  writeFileSync(path.join(dataDir, "students.csv"),
+    "student_id,roll_number,email,phone,email_verified,registration_date\n" +
+    "STU001,STUDENT/001,student@college.edu.in,9876543210,true,2026-08-15\n");
+  const app = await startApp(dataDir);
+  t.after(async () => {
+    await stopApp(app.child);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  const admin = await request(app.baseUrl, "/api/auth/admin-login", {
+    method: "POST",
+    body: { email: "superadmin@test.example", password: "test-super-admin-password" },
+  });
+  assert.equal(admin.response.status, 200);
+
+  const staticByStaffId = await request(app.baseUrl, "/api/auth/staff-login", {
+    method: "POST",
+    body: { identifier: "WARDEN/001", password: staffCredentials["warden@college.edu"] },
+  });
+  assert.equal(staticByStaffId.response.status, 200);
+  assert.equal(staticByStaffId.data.staff.staffId, "WARDEN/001");
+  assert.equal(staticByStaffId.data.staff.role, "warden");
+  assert.equal((await request(app.baseUrl, "/api/auth/staff-login", {
+    method: "POST",
+    body: { identifier: "WARDEN/999", password: staffCredentials["warden@college.edu"] },
+  })).response.status, 401);
+  assert.equal((await request(app.baseUrl, "/api/auth/staff-login", {
+    method: "POST",
+    body: { identifier: "WARDEN/001", password: "incorrect-password" },
+  })).response.status, 401);
+  assert.equal((await request(app.baseUrl, "/api/auth/staff-login", {
+    method: "POST",
+    body: { identifier: "WARDEN/001" },
+  })).response.status, 401);
+
+  const created = await request(app.baseUrl, "/api/admin/staff-accounts", {
+    method: "POST",
+    token: admin.data.token,
+    body: {
+      name: "Test IT Staff",
+      email: "new.it.staff@test.example",
+      role: "staff",
+      department: "IT / Network",
+      password: "test-managed-staff-password",
+    },
+  });
+  assert.equal(created.response.status, 201);
+  assert.equal(created.data.account.staffId, "IT/002");
+  assert.equal("passwordHash" in created.data.account, false);
+  const persistedStaff = JSON.parse(readFileSync(path.join(dataDir, "staff-accounts.json"), "utf8"));
+  assert.match(persistedStaff[0].passwordHash, /^scrypt\$/);
+  assert.notEqual(persistedStaff[0].passwordHash, "test-managed-staff-password");
+  assert.equal((await request(app.baseUrl, "/api/admin/staff-accounts", {
+    token: admin.data.token,
+  })).data.accounts.some((account) => account.staffId === "IT/002"), true);
+
+  const staffLogin = await request(app.baseUrl, "/api/auth/staff-login", {
+    method: "POST",
+    body: { identifier: created.data.account.staffId, password: "test-managed-staff-password" },
+  });
+  assert.equal(staffLogin.response.status, 200);
+  assert.equal(staffLogin.data.role, "staff");
+  assert.equal(staffLogin.data.staff.department, "IT / Network");
+  assert.equal((await request(app.baseUrl, "/api/admin/staff-accounts", {
+    token: staffLogin.data.token,
+  })).response.status, 403);
+  assert.equal((await request(app.baseUrl, "/api/admin/accounts", {
+    token: staffLogin.data.token,
+  })).response.status, 403);
+  assert.equal((await request(app.baseUrl, "/api/auth/staff-login", {
+    method: "POST",
+    body: { identifier: created.data.account.staffId, password: "incorrect-password" },
+  })).response.status, 401);
+
+  assert.equal((await request(app.baseUrl, "/api/admin/staff-accounts", {
+    method: "POST",
+    token: admin.data.token,
+    body: {
+      name: "Duplicate Staff ID",
+      email: "duplicate.staff@test.example",
+      role: "staff",
+      department: "Other",
+      staffId: created.data.account.staffId,
+      password: "test-duplicate-staff-password",
+    },
+  })).response.status, 409);
+  assert.equal((await request(app.baseUrl, "/api/admin/staff-accounts", {
+    method: "POST",
+    token: admin.data.token,
+    body: {
+      name: "Student ID Collision",
+      email: "collision.staff@test.example",
+      role: "staff",
+      department: "Other",
+      staffId: "STUDENT/001",
+      password: "test-collision-staff-password",
+    },
+  })).response.status, 409);
+  assert.equal((await request(app.baseUrl, "/api/admin/staff-accounts", {
+    method: "POST",
+    token: admin.data.token,
+    body: {
+      name: "Role Escalation",
+      email: "escalation.staff@test.example",
+      role: "super_admin",
+      department: "Administration",
+      password: "test-escalation-password",
+    },
+  })).response.status, 400);
+
+  const deactivated = await request(app.baseUrl, `/api/admin/staff-accounts/${created.data.account.id}`, {
+    method: "PATCH",
+    token: admin.data.token,
+    body: { active: false },
+  });
+  assert.equal(deactivated.response.status, 200);
+  assert.equal((await request(app.baseUrl, "/api/auth/staff-login", {
+    method: "POST",
+    body: { identifier: created.data.account.staffId, password: "test-managed-staff-password" },
+  })).response.status, 401);
+  assert.equal((await request(app.baseUrl, "/api/auth/session", {
+    token: staffLogin.data.token,
+  })).response.status, 401);
+
+  const collegeAdmin = await request(app.baseUrl, "/api/admin/accounts", {
+    method: "POST",
+    token: admin.data.token,
+    body: {
+      name: "Restricted College Admin",
+      email: "restricted.college.admin@test.example",
+      password: "test-college-admin-password",
+    },
+  });
+  assert.equal(collegeAdmin.response.status, 201);
+  const collegeAdminLogin = await request(app.baseUrl, "/api/auth/admin-login", {
+    method: "POST",
+    body: { email: "restricted.college.admin@test.example", password: "test-college-admin-password" },
+  });
+  assert.equal(collegeAdminLogin.response.status, 200);
+  assert.equal((await request(app.baseUrl, "/api/admin/staff-accounts", {
+    token: collegeAdminLogin.data.token,
+  })).response.status, 403);
+});
