@@ -975,9 +975,11 @@ function otpDigest(rollNumber: string, studentId: string, email: string, otp: st
 
 async function deliverStudentOtp(email: string, otp: string): Promise<void> {
   if (EMAIL_PROVIDER !== "resend" || !RESEND_API_KEY || !OTP_FROM_EMAIL) {
+    console.error("[OTP] Resend send failed: delivery configuration is incomplete.");
     throw new Error("Email delivery is not configured.");
   }
   let response: Response;
+  console.info("[OTP] Resend send attempt started.");
   try {
     response = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -994,9 +996,14 @@ async function deliverStudentOtp(email: string, otp: string): Promise<void> {
       signal: AbortSignal.timeout(10_000),
     });
   } catch {
+    console.error("[OTP] Resend send failed: network request error.");
     throw new Error("The email provider could not be reached.");
   }
-  if (!response.ok) throw new Error("The email provider rejected the message.");
+  if (!response.ok) {
+    console.error(`[OTP] Resend send failed: HTTP ${response.status}.`);
+    throw new Error("The email provider rejected the message.");
+  }
+  console.info(`[OTP] Resend accepted send request: HTTP ${response.status}.`);
 }
 
 function matchingRegisteredStudent(rollNumber: string, email: string): StudentCSVItem | null {
@@ -1463,6 +1470,7 @@ app.post("/api/auth/logout", requireAuth, (req, res) => {
 
 // Send OTP to the registered student email (demo codes are returned only in local demo mode).
 app.post("/api/auth/send-otp", rateLimitLogin, async (req, res) => {
+  console.info("[OTP] Send request received.");
   const { rollNumber, email, phone } = req.body;
 
   const cleanRoll = typeof rollNumber === "string" ? rollNumber.trim().toUpperCase() : "";
@@ -1503,7 +1511,6 @@ app.post("/api/auth/send-otp", rateLimitLogin, async (req, res) => {
     try {
       await deliverStudentOtp(cleanEmail, generatedOtp);
     } catch {
-      console.error("Student OTP email delivery failed.");
       return res.status(202).json(genericResponse);
     }
   } else if (!IS_DEMO_MODE) {

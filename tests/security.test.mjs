@@ -735,6 +735,9 @@ test("OTP delivery succeeds only after provider acceptance and verification is s
   assert.equal(send.response.status, 202);
   assert.equal(send.data.demoOtp, undefined);
   assert.ok(existsSync(app.otpCapturePath));
+  assert.match(app.output(), /\[OTP\] Send request received\./);
+  assert.match(app.output(), /\[OTP\] Resend send attempt started\./);
+  assert.match(app.output(), /\[OTP\] Resend accepted send request: HTTP 200\./);
   const code = readFileSync(app.otpCapturePath, "utf8");
   assert.match(code, /^\d{6}$/);
 
@@ -829,6 +832,19 @@ test("OTP delivery succeeds only after provider acceptance and verification is s
       otp: readFileSync(app.otpCapturePath, "utf8"),
     },
   })).response.status, 400);
+  assert.match(app.output(), /\[OTP\] Resend send failed: HTTP 503\./);
+  assert.match(app.output(), /\[OTP\] Resend send failed: network request error\./);
+  for (const sensitiveValue of [
+    "student@college.edu.in",
+    "ankit.singh@college.edu.in",
+    "abhinav.tiwari@college.edu.in",
+    "re_localstub_api_key_12345678",
+    "test-legacy-admin-password",
+    "test-super-admin-password",
+    code,
+  ]) {
+    assert.equal(app.output().includes(sensitiveValue), false);
+  }
 });
 
 test("OTP expiry and exact registered identity binding are enforced", async (t) => {
